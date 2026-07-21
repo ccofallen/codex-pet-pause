@@ -1,0 +1,9 @@
+.superpowers/
+.worktrees/
+.superpowers/
+node_modules/
+dist/
+.e2e-dist/
+playwright-report/
+test-results/
+*.tsbuildinfo

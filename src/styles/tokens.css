@@ -1,0 +1,72 @@
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-background: #f8f8f6;
+  --color-text: #20221f;
+  --color-muted: #5f635c;
+  --color-focus: #b95132;
+  --color-danger: #a42b24;
+  --color-accent: #b44d2b;
+  --color-accent-strong: #963b20;
+  --color-accent-contrast: #fffaf6;
+  --color-sage: #8da081;
+  --color-surface: rgb(255 255 253 / 82%);
+  --color-surface-solid: #ffffff;
+  --color-surface-soft: #eff1eb;
+  --color-border: rgb(32 34 31 / 12%);
+  --color-border-strong: rgb(32 34 31 / 22%);
+  --color-overlay: rgb(22 24 21 / 48%);
+  --shadow-card: 0 1.25rem 3.5rem rgb(42 48 39 / 10%);
+  --shadow-float: 0 1rem 3rem rgb(26 29 25 / 18%);
+  --ambient-accent: rgb(180 77 43 / 13%);
+  --ambient-sage: rgb(141 160 129 / 16%);
+  --font-family: Inter, ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-background: #0d0e0d;
+  --color-text: #f4f3ef;
+  --color-muted: #a8aaa4;
+  --color-focus: #ff9b74;
+  --color-danger: #ff938b;
+  --color-accent: #ef8059;
+  --color-accent-strong: #ff9b74;
+  --color-accent-contrast: #1b110d;
+  --color-sage: #a9bc9c;
+  --color-surface: rgb(27 29 26 / 84%);
+  --color-surface-solid: #191b18;
+  --color-surface-soft: #22251f;
+  --color-border: rgb(244 243 239 / 12%);
+  --color-border-strong: rgb(244 243 239 / 22%);
+  --color-overlay: rgb(0 0 0 / 66%);
+  --shadow-card: 0 1.25rem 3.5rem rgb(0 0 0 / 28%);
+  --shadow-float: 0 1rem 3rem rgb(0 0 0 / 46%);
+  --ambient-accent: rgb(239 128 89 / 13%);
+  --ambient-sage: rgb(169 188 156 / 10%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --color-background: #0d0e0d;
+    --color-text: #f4f3ef;
+    --color-muted: #a8aaa4;
+    --color-focus: #ff9b74;
+    --color-danger: #ff938b;
+    --color-accent: #ef8059;
+    --color-accent-strong: #ff9b74;
+    --color-accent-contrast: #1b110d;
+    --color-sage: #a9bc9c;
+    --color-surface: rgb(27 29 26 / 84%);
+    --color-surface-solid: #191b18;
+    --color-surface-soft: #22251f;
+    --color-border: rgb(244 243 239 / 12%);
+    --color-border-strong: rgb(244 243 239 / 22%);
+    --color-overlay: rgb(0 0 0 / 66%);
+    --shadow-card: 0 1.25rem 3.5rem rgb(0 0 0 / 28%);
+    --shadow-float: 0 1rem 3rem rgb(0 0 0 / 46%);
+    --ambient-accent: rgb(239 128 89 / 13%);
+    --ambient-sage: rgb(169 188 156 / 10%);
+  }
+}

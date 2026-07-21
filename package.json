@@ -1,0 +1,58 @@
+{
+  "name": "codex-pet-pause",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ccofallen/codex-pet-pause.git"
+  },
+  "homepage": "https://ccofallen.github.io/codex-pet-pause/",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:pages": "tsc -b && vite build --mode pages",
+    "build:e2e": "vite build --mode e2e --outDir .e2e-dist",
+    "preview": "vite preview",
+    "preview:e2e": "vite preview --outDir .e2e-dist",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:e2e": "playwright test",
+    "check:release-dist": "node scripts/verify-release-dist.mjs",
+    "test:verify-release-dist": "node scripts/test-verify-release-dist.mjs",
+    "verify:deployment": "node scripts/verify-deployment-build.mjs /",
+    "verify:deployment:pages": "node scripts/verify-deployment-build.mjs /codex-pet-pause/",
+    "verify:docs": "node scripts/verify-documentation.mjs",
+    "test:verify-docs": "node scripts/test-verify-documentation.mjs",
+    "test:verify-deployment-build": "node scripts/test-verify-deployment-build.mjs",
+    "check": "npm run typecheck && npm run test:run && npm run build && npm run check:release-dist && npm run test:e2e && npm run check:release-dist"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.55.0",
+    "@testing-library/jest-dom": "^6.9.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vite-pwa/assets-generator": "^1.0.2",
+    "@vitejs/plugin-react": "^6.0.0",
+    "fake-indexeddb": "^6.2.0",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.0.0",
+    "vite-plugin-pwa": "^1.1.0",
+    "vitest": "^4.1.10"
+  }
+}
