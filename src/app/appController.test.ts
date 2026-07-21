@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { createDefaultSettings } from './defaults';
 import type { AppSettings, AppSnapshot } from './model';
 import {
@@ -1562,6 +1562,20 @@ describe('application controller', () => {
 });
 
 describe('isQuietAt', () => {
+  const originalTimeZone = process.env.TZ;
+
+  beforeAll(() => {
+    process.env.TZ = 'Europe/London';
+  });
+
+  afterAll(() => {
+    if (originalTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTimeZone;
+    }
+  });
+
   test('supports daytime ranges, overnight ranges, and disabled quiet hours', () => {
     const at = (hours: number, minutes = 0) => new Date(2026, 6, 11, hours, minutes).getTime();
     expect(isQuietAt(at(9, 30), { enabled: true, startMinutes: 540, endMinutes: 600 })).toBe(true);
