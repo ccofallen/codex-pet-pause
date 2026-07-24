@@ -25,7 +25,7 @@ Codex Pet Pause makes gentle breaks feel less mechanical. A companion on your de
 
 ## Codex pet compatibility
 
-Codex Pet Pause accepts compatible Codex pet v1 and v2 files. A compatible pet commonly contains `pet.json` and `spritesheet.webp`; select the matching pair from the same pet directory when importing. Pets are imported locally into this browser and are never uploaded by this application.
+Codex Pet Pause accepts compatible Codex pet v1 and v2 files. Import either one ZIP containing one Codex pet (one pet per ZIP), or the matching `pet.json` and WebP atlas as loose files. ZIPs may contain outer folders, are extracted only in this browser, and are never uploaded. A ZIP may contain at most one pet, must be no larger than 32 MiB compressed or expanded, and may contain at most 128 entries. The existing pet manifest and atlas limits are 64 KiB and 16 MiB.
 
 ## Quick start
 

@@ -163,7 +163,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     await help.click();
     await expect(help).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByText(/Codex 宠物文件通常位于/)).toBeVisible();
+    await expect(page.getByText(/下载的 Codex 宠物可能已经是 ZIP 文件/)).toBeVisible();
     await expectNoHighImpactViolations(page);
   });
 }
@@ -180,7 +180,7 @@ test('keeps expanded import help unclipped and axe-clean at 390px', async ({ pag
   await help.click();
   await expect(help).toHaveAttribute('aria-expanded', 'true');
 
-  const disclosure = page.getByText(/Codex 宠物文件通常位于/);
+  const disclosure = page.getByText(/下载的 Codex 宠物可能已经是 ZIP 文件/);
   await expect(disclosure).toBeVisible();
   const descriptionBounds = await description.boundingBox();
   const disclosureBounds = await disclosure.boundingBox();

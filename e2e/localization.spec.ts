@@ -276,8 +276,8 @@ for (const viewport of [
         await help.click();
         await expect(help).toHaveAttribute('aria-expanded', 'true');
         const disclosure = page.getByText(locale === 'en'
-          ? /Codex pet files are usually in/
-          : /Codex 宠物文件通常位于/);
+          ? /Downloaded Codex pets may already be ZIP files/
+          : /下载的 Codex 宠物可能已经是 ZIP 文件/);
         await expect(disclosure).toBeVisible();
         for (const element of [help, disclosure]) {
           const bounds = await element.boundingBox();

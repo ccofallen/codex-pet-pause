@@ -7,6 +7,25 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const verifier = join(repositoryRoot, 'scripts/verify-documentation.mjs');
+const readme = readFileSync(join(repositoryRoot, 'README.md'), 'utf8');
+const readmeZh = readFileSync(join(repositoryRoot, 'README.zh-CN.md'), 'utf8');
+const assetProvenance = readFileSync(
+  join(repositoryRoot, 'docs/ASSET-PROVENANCE.md'),
+  'utf8',
+);
+
+assert.match(readme, /one ZIP/i);
+assert.match(readme, /one pet per ZIP/i);
+assert.match(readme, /32 MiB/);
+assert.match(readme, /128 entries/);
+assert.match(readme, /never uploaded/i);
+assert.match(readmeZh, /一个 ZIP/);
+assert.match(readmeZh, /每个 ZIP 只能包含一个宠物/);
+assert.match(readmeZh, /32 MiB/);
+assert.match(readmeZh, /128 个/);
+assert.match(readmeZh, /不会上传/);
+assert.doesNotMatch(assetProvenance, /docs\/superpowers\//);
+assert.match(assetProvenance, /e2e\/fixtures\/neko-pause-cat-atlas-baseline\.json/);
 
 function createFixture() {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'codex-pet-pause-docs-'));

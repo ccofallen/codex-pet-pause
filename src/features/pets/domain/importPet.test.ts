@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { decodeBrowserImage, parseCodexPetImport, type ImageDecoder } from './importPet';
+import {
+  decodeBrowserImage, parseCodexPetImport, parseCodexPetManifestFile, type ImageDecoder,
+} from './importPet';
 import { BUILTIN_PET_ID, type PetFrameMetadata } from './types';
 
 const file = (name: string, body: BlobPart, type: string) => new File([body], name, { type });
@@ -29,6 +31,37 @@ const frameMetadata: PetFrameMetadata = {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('parseCodexPetManifestFile', () => {
+  test('parses and normalizes a valid manifest independently of its atlas', async () => {
+    await expect(parseCodexPetManifestFile(file(
+      'pet.json',
+      JSON.stringify({
+        id: ' murk '.trim(),
+        displayName: '  Murk  ',
+        description: '  Moon ghost  ',
+        spriteVersionNumber: 2,
+        spritesheetPath: 'bundle/spritesheet.webp',
+      }),
+      'application/json',
+    ))).resolves.toEqual({
+      id: 'murk',
+      displayName: 'Murk',
+      description: 'Moon ghost',
+      spriteVersionNumber: 2,
+      spritesheetPath: 'bundle/spritesheet.webp',
+    });
+  });
+
+  test('independent manifest parsing keeps current size and JSON errors', async () => {
+    await expect(parseCodexPetManifestFile(
+      file('pet.json', ' '.repeat(64 * 1024 + 1), 'application/json'),
+    )).rejects.toMatchObject({ code: 'manifest-too-large' });
+    await expect(parseCodexPetManifestFile(
+      file('pet.json', '{broken', 'application/json'),
+    )).rejects.toMatchObject({ code: 'manifest-json-invalid' });
+  });
 });
 
 describe('decodeBrowserImage', () => {
@@ -192,6 +225,13 @@ describe('parseCodexPetImport', () => {
       file('pet.json', '{broken', 'application/json'),
       file('spritesheet.webp', 'x', 'image/webp'), 1, decode,
     )).rejects.toMatchObject({ name: 'PetImportError', code: 'manifest-json-invalid' });
+  });
+
+  test('rejects an invalid atlas before reading a malformed manifest', async () => {
+    await expect(parseCodexPetImport(
+      file('pet.json', '{broken', 'application/json'),
+      file('spritesheet.webp', 'x', 'image/png'), 1, decode,
+    )).rejects.toMatchObject({ name: 'PetImportError', code: 'atlas-file-invalid' });
   });
 
   test.each([

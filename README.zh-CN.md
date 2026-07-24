@@ -25,7 +25,7 @@ Codex Pet Pause 让温和的休息不再机械。一位桌面伙伴会帮助你�
 
 ## Codex 宠物兼容性
 
-Codex Pet Pause 支持兼容的 Codex 宠物 v1 和 v2 文件。兼容宠物通常包含 `pet.json` 和 `spritesheet.webp`；导入时请从同一宠物目录选择相匹配的一对文件。宠物仅导入到当前浏览器本地，本应用永远不会上传它们。
+Codex Pet Pause 支持兼容的 Codex 宠物 v1 和 v2 文件。可以导入仅含一个 Codex 宠物的 ZIP（一个 ZIP 中只含一个宠物），也可以选择配套的 `pet.json` 与 WebP 图集作为松散文件。ZIP 可以带外层目录，只会在当前浏览器中解压，不会上传。每个 ZIP 只能包含一个宠物，压缩前后均不得超过 32 MiB，条目不得超过 128 个；清单与图集仍分别受 64 KiB 和 16 MiB 限制。
 
 ## 快速开始
 

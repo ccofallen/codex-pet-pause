@@ -1,7 +1,7 @@
 {
   "name": "codex-pet-pause",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
   "license": "MIT",
   "repository": {
@@ -34,6 +34,7 @@
     "check": "npm run typecheck && npm run test:run && npm run build && npm run check:release-dist && npm run test:e2e && npm run check:release-dist"
   },
   "dependencies": {
+    "@zip.js/zip.js": "^2.8.34",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

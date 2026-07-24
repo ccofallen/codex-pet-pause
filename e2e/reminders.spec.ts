@@ -15,6 +15,7 @@ test('eats on the deterministic deadline and gives dragging visual priority', as
 
   const stage = page.getByTestId('cat-stage');
   const sprite = page.getByTestId('cat-sprite');
+  await expect(stage).toHaveAttribute('data-mode', 'idle');
   await page.clock.fastForward(120_000);
   await expect(stage).toHaveAttribute('data-mode', 'eating');
   await expect(sprite).toHaveAttribute('data-row', '3');

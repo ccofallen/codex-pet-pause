@@ -27,7 +27,18 @@ export type PetImportErrorCode =
   | 'atlas-name-mismatch'
   | 'atlas-decode-failed'
   | 'atlas-dimensions-invalid'
-  | 'atlas-idle-empty';
+  | 'atlas-idle-empty'
+  | 'archive-selection-mixed'
+  | 'archive-selection-multiple'
+  | 'archive-too-large'
+  | 'archive-invalid'
+  | 'archive-encrypted'
+  | 'archive-path-unsafe'
+  | 'archive-entry-limit'
+  | 'archive-expanded-too-large'
+  | 'archive-files-missing'
+  | 'archive-multiple-manifests'
+  | 'archive-atlas-ambiguous';
 
 export class PetImportError extends Error {
   constructor(
@@ -170,18 +181,36 @@ function readManifest(value: unknown): CodexPetManifest {
   };
 }
 
+function preflightManifestFile(file: File): void {
+  if (!file.name.toLowerCase().endsWith('.json') || file.type !== 'application/json') {
+    throw new PetImportError('manifest-file-invalid');
+  }
+  if (file.size > MAX_MANIFEST_BYTES) {
+    throw new PetImportError('manifest-too-large', { maximumBytes: MAX_MANIFEST_BYTES });
+  }
+}
+
+async function parseManifestContent(file: File): Promise<CodexPetManifest> {
+  try {
+    return readManifest(JSON.parse(await readFileText(file)));
+  } catch (reason) {
+    if (reason instanceof PetImportError) throw reason;
+    throw new PetImportError('manifest-json-invalid');
+  }
+}
+
+export async function parseCodexPetManifestFile(file: File): Promise<CodexPetManifest> {
+  preflightManifestFile(file);
+  return parseManifestContent(file);
+}
+
 export async function parseCodexPetImport(
   manifestFile: File,
   spritesheetFile: File,
   now: number,
   decode: ImageDecoder = decodeBrowserImage,
 ): Promise<StoredCodexPet> {
-  if (!manifestFile.name.toLowerCase().endsWith('.json') || manifestFile.type !== 'application/json') {
-    throw new PetImportError('manifest-file-invalid');
-  }
-  if (manifestFile.size > MAX_MANIFEST_BYTES) {
-    throw new PetImportError('manifest-too-large', { maximumBytes: MAX_MANIFEST_BYTES });
-  }
+  preflightManifestFile(manifestFile);
   if (!spritesheetFile.name.toLowerCase().endsWith('.webp') || spritesheetFile.type !== 'image/webp') {
     throw new PetImportError('atlas-file-invalid');
   }
@@ -189,13 +218,7 @@ export async function parseCodexPetImport(
     throw new PetImportError('atlas-too-large', { maximumBytes: MAX_SPRITESHEET_BYTES });
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFileText(manifestFile));
-  } catch {
-    throw new PetImportError('manifest-json-invalid');
-  }
-  const manifest = readManifest(parsed);
+  const manifest = await parseManifestContent(manifestFile);
   const expectedFilename = manifest.spritesheetPath.split(/[\\/]/).at(-1);
   if (!expectedFilename?.toLowerCase().endsWith('.webp')) {
     throw new PetImportError('spritesheet-path-invalid');

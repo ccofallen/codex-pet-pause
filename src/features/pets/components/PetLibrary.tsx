@@ -9,6 +9,9 @@ import { CatSprite } from '../../cat/sprite/CatSprite';
 import {
   parseCodexPetImport, PetImportError, type PetImportErrorCode,
 } from '../domain/importPet';
+import {
+  extractCodexPetArchive, type CodexPetFilePair,
+} from '../domain/importPetArchive';
 import { BUILTIN_PET_ID, type StoredCodexPet } from '../domain/types';
 import { StoredPetPreview } from './StoredPetPreview';
 
@@ -18,8 +21,11 @@ type ParseImport = (
   now: number,
 ) => Promise<StoredCodexPet>;
 
+type ExtractArchive = (archiveFile: File) => Promise<CodexPetFilePair>;
+
 interface PetLibraryProps {
   parseImport?: ParseImport;
+  extractArchive?: ExtractArchive;
   now?: () => number;
 }
 
@@ -65,6 +71,17 @@ function importErrorMessage(
       expectedHeight: Number(details.expectedHeight ?? 1872),
     });
     case 'atlas-idle-empty': return t('pet.import.error.atlasIdleEmpty');
+    case 'archive-selection-mixed': return t('pet.import.error.archiveSelectionMixed');
+    case 'archive-selection-multiple': return t('pet.import.error.archiveSelectionMultiple');
+    case 'archive-too-large': return t('pet.import.error.archiveTooLarge');
+    case 'archive-invalid': return t('pet.import.error.archiveInvalid');
+    case 'archive-encrypted': return t('pet.import.error.archiveEncrypted');
+    case 'archive-path-unsafe': return t('pet.import.error.archivePathUnsafe');
+    case 'archive-entry-limit': return t('pet.import.error.archiveEntryLimit');
+    case 'archive-expanded-too-large': return t('pet.import.error.archiveExpandedTooLarge');
+    case 'archive-files-missing': return t('pet.import.error.archiveFilesMissing');
+    case 'archive-multiple-manifests': return t('pet.import.error.archiveMultipleManifests');
+    case 'archive-atlas-ambiguous': return t('pet.import.error.archiveAtlasAmbiguous');
   }
 }
 
@@ -89,7 +106,11 @@ function libraryStatusMessage(message: LibraryMessage, t: Translator): string {
   }
 }
 
-export function PetLibrary({ parseImport = parseCodexPetImport, now = currentTime }: PetLibraryProps) {
+export function PetLibrary({
+  parseImport = parseCodexPetImport,
+  extractArchive = extractCodexPetArchive,
+  now = currentTime,
+}: PetLibraryProps) {
   const controller = useAppController();
   const snapshot = useAppSnapshot();
   const { t } = useI18n();
@@ -151,22 +172,41 @@ export function PetLibrary({ parseImport = parseCodexPetImport, now = currentTim
     importRequestRef.current = request;
     setError(undefined);
     setMessage(undefined);
+    const archives = files.filter(({ name }) => name.toLowerCase().endsWith('.zip'));
     const manifests = files.filter(({ name }) => name.toLowerCase().endsWith('.json'));
     const atlases = files.filter(({ name }) => name.toLowerCase().endsWith('.webp'));
-    if (manifests.length + atlases.length !== files.length) {
-      setError({ kind: 'selection-unsupported' });
-      return;
-    }
-    if (manifests.length === 0 || atlases.length === 0) {
-      setError({ kind: 'selection-incomplete' });
-      return;
-    }
-    if (manifests.length !== 1 || atlases.length !== 1) {
-      setError({ kind: 'selection-duplicate' });
-      return;
-    }
+
     try {
-      const imported = await parseImport(manifests[0]!, atlases[0]!, now());
+      let manifestFile: File;
+      let spritesheetFile: File;
+
+      if (archives.length > 0) {
+        if (manifests.length > 0 || atlases.length > 0) {
+          throw new PetImportError('archive-selection-mixed');
+        }
+        if (files.length !== 1 || archives.length !== 1) {
+          throw new PetImportError('archive-selection-multiple');
+        }
+        ({ manifestFile, spritesheetFile } = await extractArchive(archives[0]!));
+        if (request !== importRequestRef.current) return;
+      } else {
+        if (manifests.length + atlases.length !== files.length) {
+          setError({ kind: 'selection-unsupported' });
+          return;
+        }
+        if (manifests.length === 0 || atlases.length === 0) {
+          setError({ kind: 'selection-incomplete' });
+          return;
+        }
+        if (manifests.length !== 1 || atlases.length !== 1) {
+          setError({ kind: 'selection-duplicate' });
+          return;
+        }
+        manifestFile = manifests[0]!;
+        spritesheetFile = atlases[0]!;
+      }
+
+      const imported = await parseImport(manifestFile!, spritesheetFile!, now());
       if (request !== importRequestRef.current) return;
       if (imported.id === BUILTIN_PET_ID) {
         setError({ kind: 'import', code: 'reserved-id', details: {} });
@@ -283,7 +323,7 @@ export function PetLibrary({ parseImport = parseCodexPetImport, now = currentTim
           className="visually-hidden"
           type="file"
           multiple
-          accept="application/json,image/webp,.json,.webp"
+          accept="application/zip,application/x-zip-compressed,application/json,image/webp,.zip,.json,.webp"
           aria-label={t('pet.import.chooseFiles')}
           onChange={chooseFiles}
         />

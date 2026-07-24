@@ -14,12 +14,14 @@ import { StoredPetPreview } from './StoredPetPreview';
 import { I18nProvider } from '../../../i18n/I18nProvider';
 import type { Locale } from '../../../i18n/types';
 import { PetImportError } from '../domain/importPet';
+import type { CodexPetFilePair } from '../domain/importPetArchive';
 
 const manifestFile = new File([JSON.stringify({
   id: 'murk', displayName: 'Murk', spriteVersionNumber: 2,
   spritesheetPath: 'spritesheet.webp',
 })], 'pet.json', { type: 'application/json' });
 const atlasFile = new File(['atlas'], 'spritesheet.webp', { type: 'image/webp' });
+const zipFile = new File(['zip'], 'murk.zip', { type: 'application/zip' });
 const GLOBAL_CSS = readFileSync('src/styles/global.css', 'utf8');
 
 function deferred<T>() {
@@ -36,6 +38,7 @@ async function renderLibrary(options: {
   pets?: StoredCodexPet[];
   activePetId?: string;
   parseImport?: () => Promise<StoredCodexPet>;
+  extractArchive?: (archiveFile: File) => Promise<CodexPetFilePair>;
   strictMode?: boolean;
   locale?: Locale;
 } = {}) {
@@ -47,9 +50,19 @@ async function renderLibrary(options: {
   const controller = createAppController(deps);
   await controller.hydrate();
   const parseImport = vi.fn(options.parseImport ?? (async () => MURK_TEST_PET));
+  const extractArchive = vi.fn(options.extractArchive ?? (async () => ({
+    manifestFile,
+    spritesheetFile: atlasFile,
+  })));
   const library = (currentLocale: Locale) => (
     <AppProvider controller={controller}>
-      <I18nProvider locale={currentLocale}><PetLibrary parseImport={parseImport} /></I18nProvider>
+      <I18nProvider locale={currentLocale}>
+        <PetLibrary
+          parseImport={parseImport}
+          extractArchive={extractArchive}
+          now={() => 123}
+        />
+      </I18nProvider>
     </AppProvider>
   );
   const view = library(locale);
@@ -59,6 +72,7 @@ async function renderLibrary(options: {
     controller,
     deps,
     parseImport,
+    extractArchive,
     rerenderLocale: (nextLocale: Locale) => result.rerender(library(nextLocale)),
   };
 }
@@ -88,6 +102,69 @@ test('accepts an exact manifest and atlas pair by drag and drop', async () => {
   expect(await screen.findByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Murk');
 });
 
+test('extracts one ZIP and opens the existing preview', async () => {
+  const extractArchive = vi.fn(async () => ({
+    manifestFile,
+    spritesheetFile: atlasFile,
+  }));
+  const { parseImport } = await renderLibrary({ extractArchive });
+
+  await userEvent.setup().upload(
+    screen.getByLabelText('选择 Codex 宠物文件'),
+    zipFile,
+  );
+
+  expect(extractArchive).toHaveBeenCalledWith(zipFile);
+  expect(parseImport).toHaveBeenCalledWith(manifestFile, atlasFile, 123);
+  expect(await screen.findByRole('dialog', { name: '导入宠物预览' }))
+    .toHaveTextContent('Murk');
+});
+
+test('accepts one ZIP by drag and drop', async () => {
+  const extractArchive = vi.fn(async () => ({
+    manifestFile,
+    spritesheetFile: atlasFile,
+  }));
+  await renderLibrary({ extractArchive });
+  fireEvent.drop(screen.getByRole('button', { name: '拖放 Codex 宠物文件' }), {
+    dataTransfer: { files: [zipFile] },
+  });
+  expect(await screen.findByRole('dialog', { name: '导入宠物预览' })).toBeVisible();
+});
+
+test('rejects mixed ZIP and loose files before extraction', async () => {
+  const extractArchive = vi.fn();
+  await renderLibrary({ extractArchive });
+  fireEvent.change(screen.getByLabelText('选择 Codex 宠物文件'), {
+    target: { files: [zipFile, manifestFile, atlasFile] },
+  });
+  expect(screen.getByRole('alert')).toHaveTextContent('不能同时选择 ZIP 和散装文件');
+  expect(extractArchive).not.toHaveBeenCalled();
+});
+
+test('rejects more than one ZIP before extraction', async () => {
+  const extractArchive = vi.fn();
+  await renderLibrary({ extractArchive });
+  fireEvent.change(screen.getByLabelText('选择 Codex 宠物文件'), {
+    target: { files: [zipFile, new File(['zip'], 'luna.zip', { type: 'application/zip' })] },
+  });
+  expect(screen.getByRole('alert')).toHaveTextContent('每次只能选择一个 ZIP');
+  expect(extractArchive).not.toHaveBeenCalled();
+});
+
+test('localizes an encrypted archive failure', async () => {
+  await renderLibrary({
+    locale: 'en',
+    extractArchive: async () => {
+      throw new PetImportError('archive-encrypted');
+    },
+  });
+  await userEvent.setup().upload(screen.getByLabelText('Choose Codex pet files'), zipFile);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Encrypted ZIP files are not supported.',
+  );
+});
+
 test('reports incomplete, duplicate, and invalid file pairs without parsing', async () => {
   const user = userEvent.setup();
   const { parseImport } = await renderLibrary();
@@ -100,7 +177,7 @@ test('reports incomplete, duplicate, and invalid file pairs without parsing', as
   fireEvent.change(input, {
     target: { files: [new File(['x'], 'pet.txt', { type: 'text/plain' }), atlasFile] },
   });
-  expect(screen.getByRole('alert')).toHaveTextContent('仅支持 .json 和 .webp 文件');
+  expect(screen.getByRole('alert')).toHaveTextContent('仅支持 .zip、.json 和 .webp 文件');
   expect(parseImport).not.toHaveBeenCalled();
 });
 
@@ -127,36 +204,50 @@ test('uses a localized generic import failure without exposing unknown exception
   expect(screen.queryByText(/private codec trace/)).not.toBeInTheDocument();
 });
 
-test('only the latest import request can open the preview', async () => {
+test('a slow ZIP extraction cannot replace a newer loose-file preview', async () => {
   const user = userEvent.setup();
-  const first = deferred<StoredCodexPet>();
-  const second = deferred<StoredCodexPet>();
-  const parseImport = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-  await renderLibrary({ parseImport });
+  const firstExtraction = deferred<CodexPetFilePair>();
+  const parseImport = vi.fn()
+    .mockResolvedValueOnce({ ...MURK_TEST_PET, id: 'luna', displayName: 'Luna' })
+    .mockResolvedValueOnce(MURK_TEST_PET);
+  const { extractArchive } = await renderLibrary({
+    extractArchive: () => firstExtraction.promise,
+    parseImport,
+  });
   const input = screen.getByLabelText('选择 Codex 宠物文件');
+  await user.upload(input, zipFile);
   await user.upload(input, [manifestFile, atlasFile]);
-  await user.upload(input, [manifestFile, atlasFile]);
-  await act(async () => second.resolve({ ...MURK_TEST_PET, id: 'luna', displayName: 'Luna' }));
   expect(await screen.findByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Luna');
-  await act(async () => first.resolve(MURK_TEST_PET));
+  await act(async () => firstExtraction.resolve({ manifestFile, spritesheetFile: atlasFile }));
   expect(screen.getByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Luna');
   expect(screen.queryByText('Murk')).not.toBeInTheDocument();
+  expect(extractArchive).toHaveBeenCalledOnce();
+  expect(parseImport).toHaveBeenCalledOnce();
 });
 
-test('ignores a stale import rejection after a newer request succeeds', async () => {
+test('a slow ZIP extraction cannot replace a newer ZIP preview', async () => {
   const user = userEvent.setup();
-  const first = deferred<StoredCodexPet>();
-  const second = deferred<StoredCodexPet>();
-  const parseImport = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-  await renderLibrary({ parseImport });
+  const firstExtraction = deferred<CodexPetFilePair>();
+  const secondManifest = new File(['{}'], 'luna.json', { type: 'application/json' });
+  const secondAtlas = new File(['atlas'], 'luna.webp', { type: 'image/webp' });
+  const extractArchive = vi.fn()
+    .mockReturnValueOnce(firstExtraction.promise)
+    .mockResolvedValueOnce({ manifestFile: secondManifest, spritesheetFile: secondAtlas });
+  const parseImport = vi.fn().mockResolvedValueOnce({
+    ...MURK_TEST_PET,
+    id: 'luna',
+    displayName: 'Luna',
+  });
+  await renderLibrary({ extractArchive, parseImport });
   const input = screen.getByLabelText('选择 Codex 宠物文件');
-  await user.upload(input, [manifestFile, atlasFile]);
-  await user.upload(input, [manifestFile, atlasFile]);
-  await act(async () => second.resolve({ ...MURK_TEST_PET, id: 'luna', displayName: 'Luna' }));
+  await user.upload(input, zipFile);
+  await user.upload(input, new File(['zip'], 'luna.zip', { type: 'application/zip' }));
   await screen.findByRole('dialog', { name: '导入宠物预览' });
-  await act(async () => first.reject(new Error('旧请求失败')));
+  await act(async () => firstExtraction.resolve({ manifestFile, spritesheetFile: atlasFile }));
   expect(screen.getByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Luna');
-  expect(screen.queryByText('旧请求失败')).not.toBeInTheDocument();
+  expect(screen.queryByText('Murk')).not.toBeInTheDocument();
+  expect(extractArchive).toHaveBeenCalledTimes(2);
+  expect(parseImport).toHaveBeenCalledOnce();
 });
 
 test('cancel invalidates an import that is still decoding', async () => {
@@ -254,7 +345,7 @@ test('renders the complete empty import library in English and preserves importe
   expect(screen.getByRole('heading', { name: 'Import a Codex pet' })).toBeVisible();
   expect(screen.getByLabelText('Choose Codex pet files')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Drop Codex pet files' })).toHaveTextContent(
-    'Drop both files here, or press Enter to choose files',
+    'Drop one ZIP or the matching two files here, or press Enter to choose files',
   );
   expect(screen.getByRole('article', { name: '月影' })).toHaveTextContent('安静的伙伴');
   expect(screen.getByRole('button', { name: 'Use 月影' })).toHaveTextContent('Use this pet');
@@ -300,10 +391,10 @@ test('discloses neutral import help without activating file selection', async ()
   expect(inputClick).not.toHaveBeenCalled();
   expect(help).toHaveAttribute('aria-expanded', 'true');
   expect(help).toHaveFocus();
-  const disclosure = screen.getByText(/Codex 宠物文件通常位于/);
+  const disclosure = screen.getByText(/下载的 Codex 宠物可能已经是 ZIP 文件/);
   expect(disclosure).toBeVisible();
   expect(disclosure).toHaveTextContent(
-    'Codex 宠物文件通常位于 .codex/pets/<宠物名>/。请选择同一目录中的 pet.json 和 spritesheet.webp。也可以前往 Petdex 或其他提供 Codex 宠物资源的网站查找。',
+    '下载的 Codex 宠物可能已经是 ZIP 文件。散装文件通常位于 .codex/pets/<宠物名>/。请选择同一目录中的 pet.json 和 spritesheet.webp。也可以前往 Petdex 或其他提供 Codex 宠物资源的网站查找。',
   );
   const petdex = screen.getByRole('link', { name: 'Petdex' });
   expect(petdex).toHaveAttribute('href', 'https://petdex.dev/');
