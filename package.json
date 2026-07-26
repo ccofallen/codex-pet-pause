@@ -50,7 +50,9 @@
     "test:desktop-workflow": "node --test scripts/verify-desktop-workflow.test.mjs",
     "check:desktop-workflow": "node scripts/verify-desktop-workflow.mjs",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
-    "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs"
+    "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs",
+    "test:release-artifacts": "node --test scripts/verify-release-artifacts.test.mjs",
+    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:release-artifacts && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",
