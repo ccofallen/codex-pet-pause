@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f8eddb"/>
+  <rect x="605" y="126" width="390" height="390" rx="86" fill="#563b2b"/>
+  <g transform="translate(605 126) scale(.380859375)" fill="none" stroke="#f6c780" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M286 592c-42-72-38-174 0-246l12-96 94 68c76-32 164-32 240 0l94-68 12 96c38 72 42 174 0 246-48 84-136 130-226 130s-178-46-226-130Z"/>
+    <path d="M382 500q42 35 84 0M558 500q42 35 84 0"/>
+  </g>
+  <text x="800" y="686" fill="#563b2b" font-family="Georgia, 'Times New Roman', serif" font-size="96" font-weight="700" letter-spacing="-2" text-anchor="middle">Codex Pet Pause</text>
+</svg>

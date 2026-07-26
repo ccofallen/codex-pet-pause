@@ -43,7 +43,9 @@
     "desktop:package": "npm run desktop:pack",
     "desktop:pack": "npm run desktop:build && electron-builder --publish=never",
     "test:desktop-release-config": "node --test scripts/verify-desktop-release-config.test.mjs",
-    "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs"
+    "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs",
+    "brand:generate": "node scripts/generate-brand-assets.mjs",
+    "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",
@@ -66,6 +68,8 @@
     "electron-builder": "^24.13.3",
     "fake-indexeddb": "^6.2.0",
     "jsdom": "^27.0.0",
+    "png2icons": "^2.0.1",
+    "sharp": "^0.35.3",
     "typescript": "^5.9.0",
     "vite": "^8.0.0",
     "vite-plugin-pwa": "^1.1.0",
