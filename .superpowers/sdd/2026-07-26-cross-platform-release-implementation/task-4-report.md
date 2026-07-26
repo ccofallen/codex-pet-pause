@@ -34,3 +34,21 @@ Implemented native matrix packaging and one idempotent GitHub tag release.
 
 - Hosted GitHub Actions execution, including the Actionlint container and native installers, was not run locally; the semantic validator covers the release model before CI.
 - `npm install` reported 32 dependency audit findings already present in the dependency tree (1 moderate, 30 high, 1 critical); this task added only `yaml` for workflow parsing.
+
+## Fix Round 1 Evidence
+
+### RED
+
+The strengthened `node --test scripts/verify-desktop-workflow.test.mjs` suite failed as expected against the initial implementation: 3 passed and 5 failed. The failures demonstrated that the validator did not enforce the actionlint invocation, tag-push-only package and release conditions, matrix command presence, package `npm ci`, or protected artifact upload settings.
+
+### GREEN
+
+`npm run test:desktop-workflow` passed: 8 tests, 0 failures. The parsed-YAML fixtures now model validation, native packaging, and the idempotent release behavior, then mutate actionlint arguments, execution conditions, matrix commands, package setup, and artifact upload settings.
+
+`npm run check:desktop-workflow` passed and printed `Desktop release workflow is valid.`
+
+### Fix Review
+
+- Actionlint now uses the pinned `rhysd/actionlint:1.7.12` image and supplies only the checked-in workflow path to the image entrypoint.
+- Package and release jobs both require a push event and a `refs/tags/v*` ref, leaving main, pull request, and manual events to run validation only.
+- The semantic validator rejects missing package commands, package setup, matrix artifact interpolation, and `if-no-files-found: error`, while retaining the exact installer matrix and existing release idempotency.

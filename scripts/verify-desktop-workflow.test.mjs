@@ -4,6 +4,9 @@ import test from 'node:test';
 import { parse } from 'yaml';
 import { verifyDesktopWorkflow } from './verify-desktop-workflow.mjs';
 
+const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml';
+const tagPushCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')";
+
 const validWorkflow = {
   on: {
     push: {
@@ -15,49 +18,94 @@ const validWorkflow = {
   },
   permissions: { contents: 'write' },
   jobs: {
-    validate: {},
+    validate: {
+      'runs-on': 'ubuntu-latest',
+      steps: [
+        { uses: 'actions/checkout@v4' },
+        { uses: 'actions/setup-node@v4', with: { 'node-version': 22, cache: 'npm' } },
+        { run: 'npm ci' },
+        { run: 'npm run test:desktop-release-config' },
+        { run: 'npm run test:brand-assets' },
+        { run: 'npm run check:desktop-release-config' },
+        { run: 'npm run test:run' },
+        { run: 'npm run build' },
+        { name: 'Validate workflow syntax with actionlint', run: actionlintRun },
+      ],
+    },
     package: {
       needs: 'validate',
+      if: tagPushCondition,
       strategy: {
         matrix: {
           include: [
             {
               id: 'mac-arm64',
               os: 'macos-latest',
+              command: 'npm run desktop:pack:mac -- --arm64',
               artifact: 'release/*-mac-arm64.dmg',
             },
             {
               id: 'mac-x64',
               os: 'macos-latest',
+              command: 'npm run desktop:pack:mac -- --x64',
               artifact: 'release/*-mac-x64.dmg',
             },
             {
               id: 'windows-x64',
               os: 'windows-latest',
+              command: 'npm run desktop:pack:win -- --x64',
               artifact: 'release/*-windows-x64.exe',
             },
             {
               id: 'linux-x64',
               os: 'ubuntu-latest',
+              command: 'npm run desktop:pack:linux -- --x64',
               artifact: 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n',
             },
           ],
         },
       },
+      'runs-on': '${{ matrix.os }}',
+      steps: [
+        { uses: 'actions/checkout@v4' },
+        { uses: 'actions/setup-node@v4', with: { 'node-version': 22, cache: 'npm' } },
+        { run: 'npm ci' },
+        { run: '${{ matrix.command }}' },
+        {
+          uses: 'actions/upload-artifact@v4',
+          with: {
+            name: '${{ matrix.id }}',
+            path: '${{ matrix.artifact }}',
+            'if-no-files-found': 'error',
+          },
+        },
+      ],
     },
     release: {
       needs: 'package',
-      if: "github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')",
+      if: tagPushCondition,
+      'runs-on': 'ubuntu-latest',
+      steps: [
+        {
+          uses: 'actions/download-artifact@v4',
+          with: { path: 'release-assets', 'merge-multiple': true },
+        },
+        {
+          name: 'Publish release assets',
+          env: { GH_TOKEN: '${{ github.token }}' },
+          run: 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n',
+        },
+      ],
     },
   },
 };
 
-test('workflow validates, packages every target, and publishes tags', async () => {
+test('workflow validates, packages every target, and publishes tag pushes', async () => {
   const workflow = parse(await readFile('.github/workflows/build-desktop.yml', 'utf8'));
   assert.deepEqual(verifyDesktopWorkflow(workflow), []);
 });
 
-test('accepts the in-memory release workflow contract', () => {
+test('accepts the in-memory validation, packaging, and release contract', () => {
   assert.deepEqual(verifyDesktopWorkflow(validWorkflow), []);
 });
 
@@ -67,10 +115,40 @@ test('rejects a workflow that does not publish v* tags', () => {
   assert.ok(verifyDesktopWorkflow(invalid).some((failure) => failure.includes('v* tags')));
 });
 
-test('rejects a workflow with a missing native package target', () => {
+test('rejects an actionlint invocation with an entrypoint argument', () => {
   const invalid = structuredClone(validWorkflow);
+  invalid.jobs.validate.steps.at(-1).run = `${actionlintRun.replace(' .github', ' actionlint .github')}`;
+  assert.ok(verifyDesktopWorkflow(invalid).some((failure) => failure.includes('actionlint')));
+});
+
+test('rejects package and release jobs that run outside tag pushes', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.if = "startsWith(github.ref, 'refs/tags/v')";
+  invalid.jobs.release.if = "github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')";
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('package job must run only for v* tag pushes')));
+  assert.ok(failures.some((failure) => failure.includes('release job must run only for v* tag pushes')));
+});
+
+test('rejects a workflow with a missing native package target or command', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.strategy.matrix.include[0].command = undefined;
   invalid.jobs.package.strategy.matrix.include.pop();
-  assert.ok(verifyDesktopWorkflow(invalid).some((failure) => failure.includes('linux-x64')));
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('mac-arm64 command')));
+  assert.ok(failures.some((failure) => failure.includes('linux-x64')));
+});
+
+test('rejects packaging without npm ci or a protected matrix artifact upload', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.steps = invalid.jobs.package.steps.filter((step) => step.run !== 'npm ci');
+  const upload = invalid.jobs.package.steps.find((step) => step.uses === 'actions/upload-artifact@v4');
+  upload.with.path = 'release/*';
+  upload.with['if-no-files-found'] = 'warn';
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('package job must run npm ci')));
+  assert.ok(failures.some((failure) => failure.includes('matrix artifact path')));
+  assert.ok(failures.some((failure) => failure.includes('if-no-files-found')));
 });
 
 test('rejects a release that does not wait for packaging', () => {
