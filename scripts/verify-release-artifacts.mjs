@@ -45,6 +45,23 @@ function expectedArtifacts(version) {
   ];
 }
 
+function expectedSidecars(version) {
+  return [
+    {
+      platform: 'mac',
+      fileName: `Codex-Pet-Pause-${version}-mac-arm64.dmg.blockmap`,
+    },
+    {
+      platform: 'mac',
+      fileName: `Codex-Pet-Pause-${version}-mac-x64.dmg.blockmap`,
+    },
+    {
+      platform: 'windows',
+      fileName: `Codex-Pet-Pause-${version}-windows-x64.exe.blockmap`,
+    },
+  ];
+}
+
 export function verifyReleaseArtifacts(fileNames, version, platform = 'all') {
   if (!supportedPlatforms.has(platform)) {
     throw new Error(`Unsupported platform: ${platform}`);
@@ -61,7 +78,13 @@ export function verifyReleaseArtifacts(fileNames, version, platform = 'all') {
   const allowedMetadata = new Set(
     platform === 'all'
       ? []
-      : [...commonBuilderMetadata, ...platformBuilderMetadata[platform]],
+      : [
+        ...commonBuilderMetadata,
+        ...platformBuilderMetadata[platform],
+        ...expectedSidecars(version)
+          .filter((sidecar) => sidecar.platform === platform)
+          .map((sidecar) => sidecar.fileName),
+      ],
   );
   const failures = expected
     .filter((artifact) => !entries.some(

@@ -14,6 +14,16 @@ const completeInstallerSet = [
   'Codex-Pet-Pause-0.2.0-linux-x64.AppImage',
   'Codex-Pet-Pause-0.2.0-linux-x64.deb',
 ];
+const platformSidecars = {
+  mac: [
+    'Codex-Pet-Pause-0.2.0-mac-arm64.dmg.blockmap',
+    'Codex-Pet-Pause-0.2.0-mac-x64.dmg.blockmap',
+  ],
+  windows: [
+    'Codex-Pet-Pause-0.2.0-windows-x64.exe.blockmap',
+  ],
+};
+const invalidLinuxSidecar = 'Codex-Pet-Pause-0.2.0-linux-x64.AppImage.blockmap';
 
 test('accepts one complete 0.2.0 installer set', () => {
   assert.deepEqual(verifyReleaseArtifacts(completeInstallerSet, '0.2.0'), []);
@@ -75,15 +85,55 @@ test('tolerates only known electron-builder metadata during platform packaging',
   ]);
 });
 
+test('tolerates exact versioned sidecars generated for mac and Windows targets', () => {
+  assert.deepEqual(verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(0, 2),
+    ...platformSidecars.mac,
+  ], '0.2.0', 'mac'), []);
+  assert.deepEqual(verifyReleaseArtifacts([
+    completeInstallerSet[2],
+    ...platformSidecars.windows,
+  ], '0.2.0', 'windows'), []);
+});
+
+test('rejects a separate Linux AppImage blockmap because electron-builder embeds it', () => {
+  assert.deepEqual(verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(3),
+    invalidLinuxSidecar,
+  ], '0.2.0', 'linux'), [
+    `Unexpected release artifact: ${invalidLinuxSidecar}`,
+  ]);
+});
+
+test('rejects wrong-version, cross-platform, and unconfigured blockmaps', () => {
+  const failures = verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(0, 2),
+    'Codex-Pet-Pause-0.1.0-mac-arm64.dmg.blockmap',
+    platformSidecars.windows[0],
+    'Codex-Pet-Pause-0.2.0-mac-arm64.zip.blockmap',
+  ], '0.2.0', 'mac');
+  assert.deepEqual(failures, [
+    'Unexpected release artifact: Codex-Pet-Pause-0.1.0-mac-arm64.dmg.blockmap',
+    `Unexpected release artifact: ${platformSidecars.windows[0]}`,
+    'Unexpected release artifact: Codex-Pet-Pause-0.2.0-mac-arm64.zip.blockmap',
+  ]);
+});
+
 test('rejects all metadata and unknown files in the complete release asset set', () => {
   const failures = verifyReleaseArtifacts([
     ...completeInstallerSet,
     'builder-effective-config.yaml',
     'latest-mac.yml',
+    ...platformSidecars.mac,
+    ...platformSidecars.windows,
+    invalidLinuxSidecar,
   ], '0.2.0');
   assert.deepEqual(failures, [
     'Unexpected release artifact: builder-effective-config.yaml',
     'Unexpected release artifact: latest-mac.yml',
+    ...platformSidecars.mac.map((fileName) => `Unexpected release artifact: ${fileName}`),
+    ...platformSidecars.windows.map((fileName) => `Unexpected release artifact: ${fileName}`),
+    `Unexpected release artifact: ${invalidLinuxSidecar}`,
   ]);
 });
 
