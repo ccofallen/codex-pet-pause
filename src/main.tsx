@@ -11,8 +11,7 @@ import { createBrowserAudio } from './infrastructure/browserAudio';
 import { createIndexedDbHistoryRepository } from './infrastructure/historyRepository';
 import { createBrowserNotifications } from './infrastructure/browserNotifications';
 import { createIndexedDbPetRepository } from './infrastructure/petRepository';
-import { createBrowserSettingsRepository } from './infrastructure/settingsRepository';
-import { createSynchronizedSettingsRepository } from './infrastructure/synchronizedSettingsRepository';
+import { createRendererSettingsRepository } from './infrastructure/rendererSettingsRepository';
 import { registerPwaServiceWorker } from './infrastructure/pwaStatus';
 import { I18nProvider } from './i18n/I18nProvider';
 import { detectPreferredLocale } from './i18n/locale';
@@ -49,15 +48,12 @@ if (isDesktopMode) {
 
 const controller = createAppController({
   clock: { now: () => import.meta.env.VITE_NEKO_E2E === '1' ? window.__NEKO_TEST_NOW__ ?? Date.now() : Date.now() },
-  settings: createSynchronizedSettingsRepository(
-    createBrowserSettingsRepository(window.localStorage, defaultLocale),
-    window.localStorage,
-    {
-      conflictPolicy: rendererRole.lifecycle === 'passive'
-        ? 'replay-user-operation'
-        : 'reject',
-    },
-  ),
+  settings: createRendererSettingsRepository({
+    storage: window.localStorage,
+    defaultLocale,
+    desktopShellAvailable: window.petShell !== undefined,
+    lifecycle: rendererRole.lifecycle,
+  }),
   history: createIndexedDbHistoryRepository(window.indexedDB),
   pets: createIndexedDbPetRepository(window.indexedDB),
   notifications: createBrowserNotifications(),
