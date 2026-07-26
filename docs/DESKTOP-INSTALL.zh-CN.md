@@ -49,20 +49,20 @@ Linux 安装包面向 x64。你可以选择便携式 AppImage 或 DEB 安装包�
 ### AppImage
 
 下载以 `.AppImage` 结尾的文件，例如
-`Codex-Pet-Pause-0.2.0-linux-x86_64.AppImage`。首次启动前，请使用以下任一方式
+`Codex-Pet-Pause-0.2.0-linux-x64.AppImage`。首次启动前，请使用以下任一方式
 将它标记为可执行：
 
 - 在文件管理器中打开文件属性，启用**允许将文件作为程序执行**（不同桌面环境的
   文案可能不同），然后关闭属性窗口。
 - 在包含该文件的目录中打开终端并运行
-  `chmod +x Codex-Pet-Pause-0.2.0-linux-x86_64.AppImage`。
+  `chmod +x Codex-Pet-Pause-0.2.0-linux-x64.AppImage`。
 
 然后双击 AppImage，或从文件管理器启动它。
 
 ### DEB
 
 下载以 `.deb` 结尾的文件，例如
-`Codex-Pet-Pause-0.2.0-linux-amd64.deb`。使用桌面软件包管理器打开它，选择**安装**；
+`Codex-Pet-Pause-0.2.0-linux-x64.deb`。使用桌面软件包管理器打开它，选择**安装**；
 如果系统要求，请输入密码。安装后，从应用程序菜单启动 Codex Pet Pause。
 
 ## 本地数据、更新与卸载

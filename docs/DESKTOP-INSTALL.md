@@ -53,12 +53,12 @@ package.
 ### AppImage
 
 Download the file ending in `.AppImage`, such as
-`Codex-Pet-Pause-0.2.0-linux-x86_64.AppImage`. Before the first launch, mark it
+`Codex-Pet-Pause-0.2.0-linux-x64.AppImage`. Before the first launch, mark it
 as executable using one of these methods:
 
 - In your file manager, open the file's Properties, enable **Allow executing
   file as program** (wording varies by desktop), and close Properties.
-- In a terminal, run `chmod +x Codex-Pet-Pause-0.2.0-linux-x86_64.AppImage` in
+- In a terminal, run `chmod +x Codex-Pet-Pause-0.2.0-linux-x64.AppImage` in
   the directory containing the file.
 
 Then double-click the AppImage or launch it from your file manager.
@@ -66,7 +66,7 @@ Then double-click the AppImage or launch it from your file manager.
 ### DEB
 
 Download the file ending in `.deb`, such as
-`Codex-Pet-Pause-0.2.0-linux-amd64.deb`. Open it with your desktop package
+`Codex-Pet-Pause-0.2.0-linux-x64.deb`. Open it with your desktop package
 manager, choose **Install**, and enter your password if requested. Launch
 Codex Pet Pause from your applications menu after installation.
 
