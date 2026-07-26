@@ -36,6 +36,7 @@
     "desktop:dev": "npm run desktop:launch:dev",
     "desktop:build": "npm run build",
     "start": "npm run build && ./node_modules/.bin/electron .",
+    "start:direct": "npm run build && ./node_modules/.bin/electron . --no-sandbox",
     "desktop:dev:server": "vite --host 127.0.0.1",
     "desktop:launch": "npm run desktop:build && ./node_modules/.bin/electron . --no-sandbox",
     "desktop:launch:dev": "concurrently -k \"npm run desktop:dev:server\" \"wait-on tcp:5173 && ./node_modules/.bin/electron . --dev\"",

@@ -31,8 +31,9 @@ test('opens desktop context menu on right click', async () => {
   });
 
   const cat = await screen.findByRole('button', { name: '摸摸 Momo' });
-  fireEvent.contextMenu(cat);
-  expect(showContextMenu).toHaveBeenCalledTimes(1);
+  fireEvent.contextMenu(cat, { screenX: 640, screenY: 360 });
+  expect(showContextMenu).toHaveBeenCalledOnce();
+  expect(showContextMenu).toHaveBeenCalledWith(640, 360);
   delete window.petShell;
 });
 

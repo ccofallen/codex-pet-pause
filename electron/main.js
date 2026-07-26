@@ -16,7 +16,7 @@ const EDGE_HANDLE_SIZE = 24;
 const DOCK_THRESHOLD = 26;
 const HANDLE_RESTORE_POLL_MS = 160;
 const EDGE_DOCKING_ENABLED = false;
-const HAS_TRANSPARENT_WINDOW = process.platform !== 'linux';
+const HAS_TRANSPARENT_WINDOW = true;
 const DEFAULT_BOUNDS = {
   width: 360,
   height: 280,
