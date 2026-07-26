@@ -38,6 +38,12 @@ export function verifyDesktopWorkflow(workflow) {
   const jobs = workflow?.jobs ?? {};
   if (!jobs.validate) failures.push('validate job is required');
   if (!hasRun(jobs.validate, 'npm ci')) failures.push('validate job must run npm ci');
+  if (!hasRun(jobs.validate, 'npm run test:desktop-workflow')) {
+    failures.push('validate job must run desktop workflow tests');
+  }
+  if (!hasRun(jobs.validate, 'npm run test:release-artifacts')) {
+    failures.push('validate job must run release artifact tests');
+  }
   const actionlint = jobs.validate?.steps?.find(
     (step) => step.name === 'Validate workflow syntax with actionlint',
   );
@@ -120,11 +126,16 @@ export function verifyDesktopWorkflow(workflow) {
   }
   if (releaseValidationIndexes.length !== 1) {
     failures.push('release job must validate the complete artifact set exactly once');
-  } else if (
-    releaseValidationIndexes[0] <= downloadIndex
-    || releaseValidationIndexes[0] >= publishIndex
-  ) {
-    failures.push('release artifact validation must run after download and before publishing');
+  } else {
+    if (checkoutIndex < 0 || checkoutIndex >= releaseValidationIndexes[0]) {
+      failures.push('release job must check out before artifact validation');
+    }
+    if (
+      releaseValidationIndexes[0] <= downloadIndex
+      || releaseValidationIndexes[0] >= publishIndex
+    ) {
+      failures.push('release artifact validation must run after download and before publishing');
+    }
   }
 
   return failures;

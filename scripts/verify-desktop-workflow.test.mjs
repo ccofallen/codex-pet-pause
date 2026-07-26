@@ -26,6 +26,8 @@ const validWorkflow = {
         { run: 'npm ci' },
         { run: 'npm run test:desktop-release-config' },
         { run: 'npm run test:brand-assets' },
+        { run: 'npm run test:desktop-workflow' },
+        { run: 'npm run test:release-artifacts' },
         { run: 'npm run check:desktop-release-config' },
         { run: 'npm run test:run' },
         { run: 'npm run build' },
@@ -128,6 +130,19 @@ test('rejects an actionlint invocation with an entrypoint argument', () => {
   assert.ok(verifyDesktopWorkflow(invalid).some((failure) => failure.includes('actionlint')));
 });
 
+test('rejects validation that skips workflow or artifact regression tests', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.validate.steps = invalid.jobs.validate.steps.filter(
+    (step) => ![
+      'npm run test:desktop-workflow',
+      'npm run test:release-artifacts',
+    ].includes(step.run),
+  );
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('desktop workflow tests')));
+  assert.ok(failures.some((failure) => failure.includes('release artifact tests')));
+});
+
 test('rejects package and release jobs that run outside tag pushes', () => {
   const invalid = structuredClone(validWorkflow);
   invalid.jobs.package.if = "startsWith(github.ref, 'refs/tags/v')";
@@ -186,6 +201,17 @@ test('rejects a nested or unvalidated complete release artifact set', () => {
   const failures = verifyDesktopWorkflow(invalid);
   assert.ok(failures.some((failure) => failure.includes('merge artifacts into one directory')));
   assert.ok(failures.some((failure) => failure.includes('before publishing')));
+});
+
+test('rejects release checkout that occurs after complete artifact validation', () => {
+  const invalid = structuredClone(validWorkflow);
+  const steps = invalid.jobs.release.steps;
+  const checkout = steps.splice(steps.findIndex((step) => step.uses === 'actions/checkout@v4'), 1)[0];
+  const validationIndex = steps.findIndex((step) => step.run?.includes('verify-release-artifacts'));
+  steps.splice(validationIndex + 1, 0, checkout);
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('check out before artifact validation')),
+  );
 });
 
 test('rejects a release that does not wait for packaging', () => {
