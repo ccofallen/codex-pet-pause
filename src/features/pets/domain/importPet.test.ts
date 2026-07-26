@@ -28,6 +28,12 @@ const frameMetadata: PetFrameMetadata = {
   visibleLookDirections: [0, 8, 15],
 };
 
+function mockCanvasElement(canvas: HTMLCanvasElement): void {
+  (vi.spyOn(document, 'createElement') as unknown as {
+    mockReturnValue(value: HTMLCanvasElement): void;
+  }).mockReturnValue(canvas);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -68,7 +74,7 @@ describe('decodeBrowserImage', () => {
   test('closes the decoded ImageBitmap after reading its dimensions', async () => {
     const close = vi.fn();
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 1536, height: 2288, close })));
-    vi.spyOn(document, 'createElement').mockReturnValue({
+    mockCanvasElement({
       width: 0, height: 0, getContext: () => null,
     } as unknown as HTMLCanvasElement);
 
@@ -82,7 +88,7 @@ describe('decodeBrowserImage', () => {
     vi.stubGlobal('createImageBitmap', undefined);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fallback');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(revokeObjectURL);
-    vi.spyOn(document, 'createElement').mockReturnValue({
+    mockCanvasElement({
       width: 0, height: 0, getContext: () => null,
     } as unknown as HTMLCanvasElement);
     vi.stubGlobal('Image', class {
@@ -110,7 +116,7 @@ describe('decodeBrowserImage', () => {
     pixels[3] = 255;
     const drawImage = vi.fn();
     vi.stubGlobal('createImageBitmap', vi.fn(async () => bitmap));
-    vi.spyOn(document, 'createElement').mockReturnValue({
+    mockCanvasElement({
       width: 0,
       height: 0,
       getContext: () => ({ drawImage, getImageData: () => ({ data: pixels }) }),
@@ -126,7 +132,7 @@ describe('decodeBrowserImage', () => {
   test('keeps valid dimensions when canvas readback fails', async () => {
     const close = vi.fn();
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 1536, height: 2288, close })));
-    vi.spyOn(document, 'createElement').mockReturnValue({
+    mockCanvasElement({
       width: 0,
       height: 0,
       getContext: () => { throw new Error('canvas blocked'); },

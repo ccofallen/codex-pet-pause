@@ -59,6 +59,9 @@ interface PointerSession {
   element: HTMLButtonElement;
   dragging: boolean;
   captured: boolean;
+  dragWindow: boolean;
+  windowOrigin: Point;
+  pointerOrigin: Point;
 }
 
 interface PointerSample extends Point {
@@ -444,6 +447,7 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
     if (pointerSessionRef.current !== undefined) return;
     suppressClickRef.current = false;
     if (bubbleOpenRef.current) event.preventDefault();
+    const windowOrigin = { x: event.screenX - event.clientX, y: event.screenY - event.clientY };
     pointerSessionRef.current = {
       pointerId: event.pointerId,
       origin: { x: event.clientX, y: event.clientY },
@@ -451,6 +455,9 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
       element: event.currentTarget,
       dragging: false,
       captured: false,
+      dragWindow: typeof window.petShell?.dragWindowTo === 'function',
+      windowOrigin,
+      pointerOrigin: { x: event.screenX, y: event.screenY },
     };
   };
 
@@ -472,7 +479,15 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
         // Dragging still works while the pointer remains over the button.
       }
     }
-    if (session.dragging) updatePosition({ x: session.start.x + dx, y: session.start.y + dy });
+    if (!session.dragging) return;
+    if (session.dragWindow && typeof window.petShell?.dragWindowTo === 'function') {
+      window.petShell.dragWindowTo(
+        session.windowOrigin.x + event.screenX - session.pointerOrigin.x,
+        session.windowOrigin.y + event.screenY - session.pointerOrigin.y,
+      );
+      return;
+    }
+    updatePosition({ x: session.start.x + dx, y: session.start.y + dy });
   };
 
   const onPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -516,6 +531,11 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
     freezeAutonomousMovement();
     if (behaviorRef.current.due) updateBubbleOpen(true);
     else dispatchBehavior({ type: 'PETTED', now: runtime.now() });
+  };
+
+  const onContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    window.petShell?.showContextMenu?.(event.screenX, event.screenY);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -569,6 +589,7 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
         onPointerCancel={onPointerCancel}
         onLostPointerCapture={onLostPointerCapture}
         onClick={onClick}
+        onContextMenu={onContextMenu}
         onKeyDown={onKeyDown}
       >
         <CatSprite

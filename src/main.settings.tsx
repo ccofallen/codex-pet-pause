@@ -1,8 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './app/App';
 import { AppProvider, useAppSnapshot } from './app/AppProvider';
-import { DesktopApp } from './app/DesktopApp';
 import { createAppController } from './app/appController';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { SettingsPage } from './features/settings/SettingsPage';
@@ -11,39 +9,12 @@ import { createIndexedDbHistoryRepository } from './infrastructure/historyReposi
 import { createBrowserNotifications } from './infrastructure/browserNotifications';
 import { createIndexedDbPetRepository } from './infrastructure/petRepository';
 import { createBrowserSettingsRepository } from './infrastructure/settingsRepository';
-import { registerPwaServiceWorker } from './infrastructure/pwaStatus';
 import { I18nProvider } from './i18n/I18nProvider';
 import { detectPreferredLocale } from './i18n/locale';
-import { translate } from './i18n/messages';
 import './styles/tokens.css';
 import './styles/global.css';
 
-if (import.meta.env.PROD) void registerPwaServiceWorker();
-
-const query = new URLSearchParams(window.location.search);
-const isDesktopMode = query.get('mode') === 'desktop';
-const isSettingsMode = query.get('mode') === 'settings' || query.get('hidePet') === '1';
-const section = query.get('view') === 'reminders' || query.get('section') === 'reminders' ? 'reminders' : 'general';
 const defaultLocale = detectPreferredLocale(navigator.languages);
-document.documentElement.lang = defaultLocale;
-document.title = translate(defaultLocale, 'document.title');
-
-if (isDesktopMode) {
-  const appRoot = document.getElementById('root');
-  document.documentElement.dataset.petDesktop = '1';
-  document.body.dataset.petDesktop = '1';
-  if (appRoot) appRoot.dataset.petDesktop = '1';
-  document.documentElement.style.minWidth = '0px';
-  document.body.style.minWidth = '0px';
-  document.documentElement.style.minHeight = '0px';
-  document.body.style.minHeight = '0px';
-  document.documentElement.style.background = 'transparent';
-  document.body.style.background = 'transparent';
-  document.body.style.overflow = 'hidden';
-  document.documentElement.style.overflow = 'hidden';
-  void import('./styles/desktop.css');
-}
-
 const controller = createAppController({
   clock: { now: () => import.meta.env.VITE_NEKO_E2E === '1' ? window.__NEKO_TEST_NOW__ ?? Date.now() : Date.now() },
   settings: createBrowserSettingsRepository(window.localStorage, defaultLocale),
@@ -53,16 +24,13 @@ const controller = createAppController({
   audio: createBrowserAudio(undefined, `${import.meta.env.BASE_URL}assets/cat/meow.wav`),
   defaultLocale,
 });
+const section = new URLSearchParams(window.location.search).get('section') === 'reminders' ? 'reminders' : 'general';
 
 function SettingsRoot() {
   const snapshot = useAppSnapshot();
   return <I18nProvider locale={snapshot.settings.locale}><ThemeProvider mode={snapshot.settings.theme}><main className="settings-page-root"><SettingsPage section={section} /></main></ThemeProvider></I18nProvider>;
 }
 
-function RendererApp() {
-  return isDesktopMode ? <DesktopApp /> : isSettingsMode ? <SettingsRoot /> : <App />;
-}
-
 createRoot(document.getElementById('root')!).render(
-  <StrictMode><AppProvider controller={controller}><RendererApp /></AppProvider></StrictMode>,
+  <StrictMode><AppProvider controller={controller}><SettingsRoot /></AppProvider></StrictMode>,
 );
