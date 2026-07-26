@@ -8,6 +8,9 @@ const expected = {
   macIcon: 'build/icons/icon.icns',
   winIcon: 'build/icons/icon.ico',
   linuxIcon: 'build/icons/png',
+  macArtifactName: 'Codex-Pet-Pause-${version}-mac-${arch}.${ext}',
+  winArtifactName: 'Codex-Pet-Pause-${version}-windows-${arch}.${ext}',
+  linuxArtifactName: 'Codex-Pet-Pause-${version}-linux-${arch}.${ext}',
 };
 
 function targetsFor(platform) {
@@ -44,6 +47,16 @@ export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync)
   }
   if (!linuxTargets.get('AppImage')?.includes('x64')) failures.push('Linux AppImage must target x64');
   if (!linuxTargets.get('deb')?.includes('x64')) failures.push('Linux DEB must target x64');
+
+  for (const [label, platform, artifactName] of [
+    ['macOS artifact name', 'mac', expected.macArtifactName],
+    ['Windows artifact name', 'win', expected.winArtifactName],
+    ['Linux artifact name', 'linux', expected.linuxArtifactName],
+  ]) {
+    if (build[platform]?.artifactName !== artifactName) {
+      failures.push(`${label} must be ${artifactName}`);
+    }
+  }
 
   for (const [label, platform, icon] of [
     ['macOS icon', 'mac', expected.macIcon],

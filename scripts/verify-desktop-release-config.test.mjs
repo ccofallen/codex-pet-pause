@@ -30,6 +30,18 @@ const validPackage = {
 test('accepts the approved desktop release contract', () => {
   const failures = verifyDesktopReleaseConfig(validPackage, () => true);
   assert.deepEqual(failures, []);
+  assert.equal(
+    validPackage.build.mac.artifactName,
+    'Codex-Pet-Pause-${version}-mac-${arch}.${ext}',
+  );
+  assert.equal(
+    validPackage.build.win.artifactName,
+    'Codex-Pet-Pause-${version}-windows-${arch}.${ext}',
+  );
+  assert.equal(
+    validPackage.build.linux.artifactName,
+    'Codex-Pet-Pause-${version}-linux-${arch}.${ext}',
+  );
 });
 
 test('rejects an identity, target, or icon regression', () => {
@@ -51,6 +63,17 @@ test('rejects wrong configured native icon paths even when expected files exist'
   assert.ok(failures.some((failure) => failure.includes('macOS icon must be configured as build/icons/icon.icns')));
   assert.ok(failures.some((failure) => failure.includes('Windows icon must be configured as build/icons/icon.ico')));
   assert.ok(failures.some((failure) => failure.includes('Linux icon must be configured as build/icons/png')));
+});
+
+test('rejects artifact names that differ from the release contract', () => {
+  const invalid = structuredClone(validPackage);
+  invalid.build.mac.artifactName = 'Codex-Pet-Pause-${version}-mac.${ext}';
+  invalid.build.win.artifactName = 'Codex-Pet-Pause-${version}-win-${arch}.${ext}';
+  invalid.build.linux.artifactName = 'Codex-Pet-Pause-${version}-linux-${version}.${ext}';
+  const failures = verifyDesktopReleaseConfig(invalid, () => true);
+  assert.ok(failures.some((failure) => failure.includes('macOS artifact name')));
+  assert.ok(failures.some((failure) => failure.includes('Windows artifact name')));
+  assert.ok(failures.some((failure) => failure.includes('Linux artifact name')));
 });
 
 test('rejects unintended extra target formats on every platform', () => {

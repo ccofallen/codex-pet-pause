@@ -82,6 +82,8 @@ function resolveWindowUrl(mode) {
 
 function resolveAssetPath(filename) {
   const candidates = [
+    path.join(app.getAppPath(), 'build', 'icons', 'png', '512x512.png'),
+    path.join(CURRENT_DIR, '..', 'build', 'icons', 'png', '512x512.png'),
     path.join(app.getAppPath(), 'public', 'icons', filename),
     path.join(CURRENT_DIR, '..', 'public', 'icons', filename),
   ];
