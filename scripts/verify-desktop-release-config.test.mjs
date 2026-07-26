@@ -41,3 +41,25 @@ test('rejects an identity, target, or icon regression', () => {
   assert.ok(failures.some((failure) => failure.includes('NSIS')));
   assert.ok(failures.some((failure) => failure.includes('icon')));
 });
+
+test('rejects wrong configured native icon paths even when expected files exist', () => {
+  const invalid = structuredClone(validPackage);
+  invalid.build.mac.icon = 'build/icons/wrong.icns';
+  invalid.build.win.icon = 'build/icons/wrong.ico';
+  invalid.build.linux.icon = 'build/icons/wrong-png';
+  const failures = verifyDesktopReleaseConfig(invalid, () => true);
+  assert.ok(failures.some((failure) => failure.includes('macOS icon must be configured as build/icons/icon.icns')));
+  assert.ok(failures.some((failure) => failure.includes('Windows icon must be configured as build/icons/icon.ico')));
+  assert.ok(failures.some((failure) => failure.includes('Linux icon must be configured as build/icons/png')));
+});
+
+test('rejects unintended extra target formats on every platform', () => {
+  const invalid = structuredClone(validPackage);
+  invalid.build.mac.target.push({ target: 'zip', arch: ['arm64', 'x64'] });
+  invalid.build.win.target.push({ target: 'nsis-web', arch: ['x64'] });
+  invalid.build.linux.target.push({ target: 'snap', arch: ['x64'] });
+  const failures = verifyDesktopReleaseConfig(invalid, () => true);
+  assert.ok(failures.some((failure) => failure.includes('macOS targets must be exactly dmg')));
+  assert.ok(failures.some((failure) => failure.includes('Windows targets must be exactly nsis')));
+  assert.ok(failures.some((failure) => failure.includes('Linux targets must be exactly AppImage and deb')));
+});

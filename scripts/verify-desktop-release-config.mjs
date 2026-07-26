@@ -23,20 +23,34 @@ export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync)
   if (build.productName !== expected.productName) failures.push(`productName must be ${expected.productName}`);
 
   const macTargets = targetsFor(build.mac);
+  if (macTargets.size !== 1 || !macTargets.has('dmg')) {
+    failures.push('macOS targets must be exactly dmg');
+  }
   if (!macTargets.get('dmg')?.includes('arm64') || !macTargets.get('dmg')?.includes('x64')) {
     failures.push('macOS DMG must target arm64 and x64');
   }
   const winTargets = targetsFor(build.win);
+  if (winTargets.size !== 1 || !winTargets.has('nsis')) {
+    failures.push('Windows targets must be exactly nsis');
+  }
   if (!winTargets.get('nsis')?.includes('x64')) failures.push('Windows NSIS must target x64');
   const linuxTargets = targetsFor(build.linux);
+  if (
+    linuxTargets.size !== 2 ||
+    !linuxTargets.has('AppImage') ||
+    !linuxTargets.has('deb')
+  ) {
+    failures.push('Linux targets must be exactly AppImage and deb');
+  }
   if (!linuxTargets.get('AppImage')?.includes('x64')) failures.push('Linux AppImage must target x64');
   if (!linuxTargets.get('deb')?.includes('x64')) failures.push('Linux DEB must target x64');
 
-  for (const [label, icon] of [
-    ['macOS icon', expected.macIcon],
-    ['Windows icon', expected.winIcon],
-    ['Linux icon', expected.linuxIcon],
+  for (const [label, platform, icon] of [
+    ['macOS icon', 'mac', expected.macIcon],
+    ['Windows icon', 'win', expected.winIcon],
+    ['Linux icon', 'linux', expected.linuxIcon],
   ]) {
+    if (build[platform]?.icon !== icon) failures.push(`${label} must be configured as ${icon}`);
     if (!fileExists(icon)) failures.push(`${label} is missing: ${icon}`);
   }
   return failures;

@@ -71,3 +71,80 @@ ok 2 - rejects an identity, target, or icon regression
 
 - `check:desktop-release-config` is expected to fail in this task state because `package.json` does not yet contain the final macOS, Windows, and Linux target configuration and the required icon assets are not present. Those changes belong to later release tasks.
 - Artifact-name templates are present in the behavioral fixture but are not validated by the prescribed validator implementation.
+
+## Fix round 1 evidence
+
+### RED mutations
+
+Added mutations for wrong configured native icon paths with `fileExists` returning `true`, plus extra `zip`, `nsis-web`, and `snap` targets. Before the validator changes:
+
+```bash
+node --test scripts/verify-desktop-release-config.test.mjs
+```
+
+```text
+TAP version 13
+# Subtest: accepts the approved desktop release contract
+ok 1 - accepts the approved desktop release contract
+# Subtest: rejects an identity, target, or icon regression
+ok 2 - rejects an identity, target, or icon regression
+# Subtest: rejects wrong configured native icon paths even when expected files exist
+not ok 3 - rejects wrong configured native icon paths even when expected files exist
+# Subtest: rejects unintended extra target formats on every platform
+not ok 4 - rejects unintended extra target formats on every platform
+1..4
+# tests 4
+# pass 2
+# fail 2
+```
+
+### GREEN focused test
+
+```bash
+npm run test:desktop-release-config
+```
+
+```text
+TAP version 13
+# Subtest: accepts the approved desktop release contract
+ok 1 - accepts the approved desktop release contract
+# Subtest: rejects an identity, target, or icon regression
+ok 2 - rejects an identity, target, or icon regression
+# Subtest: rejects wrong configured native icon paths even when expected files exist
+ok 3 - rejects wrong configured native icon paths even when expected files exist
+# Subtest: rejects unintended extra target formats on every platform
+ok 4 - rejects unintended extra target formats on every platform
+1..4
+# tests 4
+# pass 4
+# fail 0
+```
+
+### Direct check
+
+```bash
+npm run check:desktop-release-config
+```
+
+Expected current-package failure (exit code 1):
+
+```text
+Error: macOS targets must be exactly dmg
+macOS DMG must target arm64 and x64
+Windows targets must be exactly nsis
+Windows NSIS must target x64
+Linux targets must be exactly AppImage and deb
+Linux AppImage must target x64
+Linux DEB must target x64
+macOS icon must be configured as build/icons/icon.icns
+macOS icon is missing: build/icons/icon.icns
+Windows icon must be configured as build/icons/icon.ico
+Windows icon is missing: build/icons/icon.ico
+Linux icon must be configured as build/icons/png
+Linux icon is missing: build/icons/png
+```
+
+## Fix round 1 changes
+
+- Native icon validation now compares each configured platform icon with its expected native path before checking file existence.
+- Target validation now rejects any platform target-name set other than macOS `dmg`, Windows `nsis`, and Linux `AppImage` plus `deb`, while retaining the required architecture checks.
