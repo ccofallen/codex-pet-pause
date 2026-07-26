@@ -40,24 +40,28 @@ const validWorkflow = {
           include: [
             {
               id: 'mac-arm64',
+              platform: 'mac',
               os: 'macos-latest',
               command: 'npm run desktop:pack:mac -- --arm64',
               artifact: 'release/*-mac-arm64.dmg',
             },
             {
               id: 'mac-x64',
+              platform: 'mac',
               os: 'macos-latest',
               command: 'npm run desktop:pack:mac -- --x64',
               artifact: 'release/*-mac-x64.dmg',
             },
             {
               id: 'windows-x64',
+              platform: 'windows',
               os: 'windows-latest',
               command: 'npm run desktop:pack:win -- --x64',
               artifact: 'release/*-windows-x64.exe',
             },
             {
               id: 'linux-x64',
+              platform: 'linux',
               os: 'ubuntu-latest',
               command: 'npm run desktop:pack:linux -- --x64',
               artifact: 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n',
@@ -71,6 +75,7 @@ const validWorkflow = {
         { uses: 'actions/setup-node@v4', with: { 'node-version': 22, cache: 'npm' } },
         { run: 'npm ci' },
         { run: '${{ matrix.command }}' },
+        { run: 'node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}' },
         {
           uses: 'actions/upload-artifact@v4',
           with: {
@@ -86,10 +91,12 @@ const validWorkflow = {
       if: tagPushCondition,
       'runs-on': 'ubuntu-latest',
       steps: [
+        { uses: 'actions/checkout@v4' },
         {
           uses: 'actions/download-artifact@v4',
           with: { path: 'release-assets', 'merge-multiple': true },
         },
+        { run: 'node scripts/verify-release-artifacts.mjs release-assets' },
         {
           name: 'Publish release assets',
           env: { GH_TOKEN: '${{ github.token }}' },
@@ -149,6 +156,36 @@ test('rejects packaging without npm ci or a protected matrix artifact upload', (
   assert.ok(failures.some((failure) => failure.includes('package job must run npm ci')));
   assert.ok(failures.some((failure) => failure.includes('matrix artifact path')));
   assert.ok(failures.some((failure) => failure.includes('if-no-files-found')));
+});
+
+test('rejects native package entries without the validator platform', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.strategy.matrix.include[0].platform = 'windows';
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('mac-arm64 validator platform')),
+  );
+});
+
+test('rejects package artifact validation that does not run after the native build', () => {
+  const invalid = structuredClone(validWorkflow);
+  const steps = invalid.jobs.package.steps;
+  const validation = steps.splice(steps.findIndex((step) => step.run?.includes('verify-release-artifacts')), 1)[0];
+  steps.splice(steps.findIndex((step) => step.run === '${{ matrix.command }}'), 0, validation);
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('after the matrix command')),
+  );
+});
+
+test('rejects a nested or unvalidated complete release artifact set', () => {
+  const invalid = structuredClone(validWorkflow);
+  const steps = invalid.jobs.release.steps;
+  const download = steps.find((step) => step.uses === 'actions/download-artifact@v4');
+  download.with['merge-multiple'] = false;
+  const validation = steps.splice(steps.findIndex((step) => step.run?.includes('verify-release-artifacts')), 1)[0];
+  steps.push(validation);
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('merge artifacts into one directory')));
+  assert.ok(failures.some((failure) => failure.includes('before publishing')));
 });
 
 test('rejects a release that does not wait for packaging', () => {

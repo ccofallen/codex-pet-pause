@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -48,7 +48,7 @@ test('the executable --platform option validates only that platform', async () =
 
   try {
     for (const fileName of completeInstallerSet.slice(0, 2)) {
-      await writeFile(join(directory, fileName), '');
+      await writeFile(join(directory, fileName), 'package');
     }
 
     const macResult = spawnSync(process.execPath, [script, directory, '--platform', 'mac'], {
@@ -61,6 +61,25 @@ test('the executable --platform option validates only that platform', async () =
     assert.match(allResult.stderr, /windows-x64/);
     assert.match(allResult.stderr, /linux-x64\.AppImage/);
     assert.match(allResult.stderr, /linux-x64\.deb/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the executable rejects zero-byte and non-regular expected artifacts', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-pet-release-invalid-'));
+  const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
+
+  try {
+    await writeFile(join(directory, completeInstallerSet[0]), '');
+    await mkdir(join(directory, completeInstallerSet[1]));
+
+    const result = spawnSync(process.execPath, [script, directory, '--platform', 'mac'], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-arm64\.dmg/);
+    assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-x64\.dmg/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

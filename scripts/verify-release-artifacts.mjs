@@ -1,4 +1,5 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const supportedPlatforms = new Set(['all', 'mac', 'windows', 'linux']);
@@ -65,7 +66,11 @@ function parseArguments(args) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { directory, platform } = parseArguments(process.argv.slice(2));
   const entries = await readdir(directory, { withFileTypes: true });
-  const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  const fileNames = [];
+  for (const entry of entries) {
+    const details = await lstat(join(directory, entry.name));
+    if (details.isFile() && details.size > 0) fileNames.push(entry.name);
+  }
   const packageJson = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   );
