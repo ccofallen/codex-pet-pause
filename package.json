@@ -42,8 +42,13 @@
     "desktop:launch:dev": "concurrently -k \"npm run desktop:dev:server\" \"wait-on tcp:5173 && ./node_modules/.bin/electron . --dev\"",
     "desktop:package": "npm run desktop:pack",
     "desktop:pack": "npm run desktop:build && electron-builder --publish=never",
+    "desktop:pack:mac": "npm run desktop:pack -- --mac",
+    "desktop:pack:win": "npm run desktop:pack -- --win",
+    "desktop:pack:linux": "npm run desktop:pack -- --linux",
     "test:desktop-release-config": "node --test scripts/verify-desktop-release-config.test.mjs",
     "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs",
+    "test:desktop-workflow": "node --test scripts/verify-desktop-workflow.test.mjs",
+    "check:desktop-workflow": "node scripts/verify-desktop-workflow.mjs",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs"
   },
@@ -74,7 +79,8 @@
     "vite": "^8.0.0",
     "vite-plugin-pwa": "^1.1.0",
     "vitest": "^4.1.10",
-    "wait-on": "^8.0.5"
+    "wait-on": "^8.0.5",
+    "yaml": "^2.8.1"
   },
   "main": "electron/main.js",
   "build": {

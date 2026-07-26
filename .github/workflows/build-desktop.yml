@@ -1,0 +1,87 @@
+name: Build Desktop
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:desktop-release-config
+      - run: npm run test:brand-assets
+      - run: npm run check:desktop-release-config
+      - run: npm run test:run
+      - run: npm run build
+      - name: Validate workflow syntax with actionlint
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:latest actionlint .github/workflows/build-desktop.yml
+
+  package:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: mac-arm64
+            os: macos-latest
+            command: npm run desktop:pack:mac -- --arm64
+            artifact: release/*-mac-arm64.dmg
+          - id: mac-x64
+            os: macos-latest
+            command: npm run desktop:pack:mac -- --x64
+            artifact: release/*-mac-x64.dmg
+          - id: windows-x64
+            os: windows-latest
+            command: npm run desktop:pack:win -- --x64
+            artifact: release/*-windows-x64.exe
+          - id: linux-x64
+            os: ubuntu-latest
+            command: npm run desktop:pack:linux -- --x64
+            artifact: |
+              release/*-linux-x64.AppImage
+              release/*-linux-x64.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME"; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"
+          fi
