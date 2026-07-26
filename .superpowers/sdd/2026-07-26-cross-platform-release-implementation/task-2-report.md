@@ -152,3 +152,124 @@ smallest size.
 high and 1 critical. Remediation was not attempted because it is outside Task 2
 and may require unrelated or breaking dependency changes. No asset-generation
 failure or warning was observed.
+
+## Fix Round 1
+
+### P1: Deterministic Cover Title
+
+Replaced the host-rendered SVG `<text>` element with committed SVG path
+geometry shaped from Georgia Bold. The conversion retained the approved `96px`
+wordmark, `-2` tracking, baseline at `y=686`, and centered placement:
+
+```text
+width=777.375 startX=411.312
+```
+
+The source no longer requires a font at generation time. The path group keeps
+`aria-label="Codex Pet Pause"` so the exact title remains identified in the
+vector source. The regenerated cover was opened and visually inspected; the
+wordmark remains readable as `Codex Pet Pause` and preserves the approved
+appearance and margins.
+
+### P2: Generated-File Test Coverage
+
+Strengthened `scripts/generate-brand-assets.test.mjs` to exercise generated
+files directly:
+
+- Validates PNG format and dimensions for all Linux sizes: `16`, `32`, `48`,
+  `64`, `128`, `256`, `512`, and `1024`.
+- Validates both PWA PNGs at `192x192` and `512x512`.
+- Parses the ICO directory, validates all nine entry bounds and dimensions, and
+  decodes every embedded PNG with `sharp`.
+- Parses all ICNS chunks, validates chunk bounds and uniqueness, requires all
+  eight modern PNG representations, and decodes each representation with
+  `sharp` at its expected size.
+
+### Negative Payload Test Evidence
+
+The first ICO image payload was intentionally corrupted in the generated
+`build/icons/icon.ico` file before running the strengthened test. The generated
+file test rejected the unusable embedded representation:
+
+```text
+$ node --test scripts/generate-brand-assets.test.mjs
+TAP version 13
+# Subtest: generated brand assets have expected formats and dimensions
+not ok 1 - generated brand assets have expected formats and dimensions
+  ---
+  error: 'Input buffer contains unsupported image format'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+```
+
+The corrupted file was restored before clean regeneration.
+
+### Final Test Evidence
+
+Command:
+
+```text
+npm run test:brand-assets
+```
+
+Output:
+
+```text
+> codex-pet-pause@0.2.0 test:brand-assets
+> npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs
+
+> codex-pet-pause@0.2.0 brand:generate
+> node scripts/generate-brand-assets.mjs
+
+TAP version 13
+# Subtest: generated brand assets have expected formats and dimensions
+ok 1 - generated brand assets have expected formats and dimensions
+  ---
+  duration_ms: 5.936084
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 60.75625
+```
+
+Repeated-generation command:
+
+```text
+shasum -a 256 "${assets[@]}" > /tmp/task-2-fix-assets-before.sha256
+npm run brand:generate
+shasum -a 256 "${assets[@]}" > /tmp/task-2-fix-assets-after.sha256
+cmp /tmp/task-2-fix-assets-before.sha256 /tmp/task-2-fix-assets-after.sha256
+```
+
+Output:
+
+```text
+> codex-pet-pause@0.2.0 brand:generate
+> node scripts/generate-brand-assets.mjs
+
+PASS: all 14 generated asset hashes are identical across consecutive runs
+```
+
+Diff hygiene:
+
+```text
+$ git diff --check
+PASS: git diff --check
+```
+
+Package targets and desktop builder configuration were not changed.
