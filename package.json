@@ -41,7 +41,9 @@
     "desktop:launch": "npm run desktop:build && ./node_modules/.bin/electron . --no-sandbox",
     "desktop:launch:dev": "concurrently -k \"npm run desktop:dev:server\" \"wait-on tcp:5173 && ./node_modules/.bin/electron . --dev\"",
     "desktop:package": "npm run desktop:pack",
-    "desktop:pack": "npm run desktop:build && electron-builder --publish=never"
+    "desktop:pack": "npm run desktop:build && electron-builder --publish=never",
+    "test:desktop-release-config": "node --test scripts/verify-desktop-release-config.test.mjs",
+    "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",
