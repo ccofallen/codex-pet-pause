@@ -110,3 +110,11 @@ test('rejects duplicate expected target definitions', () => {
   assert.ok(failures.some((failure) => failure.includes('Windows targets must be exactly one nsis entry')));
   assert.ok(failures.some((failure) => failure.includes('Linux targets must be exactly one AppImage entry and one deb entry')));
 });
+
+test('accepts approved target and architecture entries in any order', () => {
+  const reordered = structuredClone(validPackage);
+  reordered.build.mac.target[0].arch = ['x64', 'arm64'];
+  reordered.build.linux.target.reverse();
+  const failures = verifyDesktopReleaseConfig(reordered, () => true);
+  assert.deepEqual(failures, []);
+});

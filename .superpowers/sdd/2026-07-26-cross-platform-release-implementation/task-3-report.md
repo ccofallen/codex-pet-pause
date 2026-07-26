@@ -82,3 +82,127 @@ npm run test:desktop-release-config && npm run check:desktop-release-config
 - `test:desktop-release-config`: 7 passed, 0 failed.
 - `check:desktop-release-config`: printed `Desktop release configuration is valid.`
 - The validator now requires exactly one expected target entry per platform target and exact, order-insensitive, duplicate-free architecture lists.
+
+## Fix Round 2: Order-Independent Target Regression
+
+### RED: Intentional Order-Sensitive Mutation
+
+```text
+$ node --test --test-name-pattern='accepts approved target and architecture entries in any order' scripts/verify-desktop-release-config.test.mjs
+```
+TAP version 13
+# Subtest: accepts approved target and architecture entries in any order
+not ok 1 - accepts approved target and architecture entries in any order
+  ---
+  duration_ms: 0.878167
+  type: 'test'
+  location: '/Users/cc/Documents/Codex/codex-pet-pause-desktop/.worktrees/cross-platform-release/scripts/verify-desktop-release-config.test.mjs:114:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + [
+    +   'macOS DMG must target exactly arm64 and x64'
+    + ]
+    - []
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: 'macOS DMG must target exactly arm64 and x64'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/cc/Documents/Codex/codex-pet-pause-desktop/.worktrees/cross-platform-release/scripts/verify-desktop-release-config.test.mjs:119:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 33.729375
+
+### GREEN: Focused Regression Suite
+
+```text
+$ npm run test:desktop-release-config
+```
+
+> codex-pet-pause@0.2.0 test:desktop-release-config
+> node --test scripts/verify-desktop-release-config.test.mjs
+
+TAP version 13
+# Subtest: accepts the approved desktop release contract
+ok 1 - accepts the approved desktop release contract
+  ---
+  duration_ms: 0.85775
+  type: 'test'
+  ...
+# Subtest: rejects an identity, target, or icon regression
+ok 2 - rejects an identity, target, or icon regression
+  ---
+  duration_ms: 0.116458
+  type: 'test'
+  ...
+# Subtest: rejects wrong configured native icon paths even when expected files exist
+ok 3 - rejects wrong configured native icon paths even when expected files exist
+  ---
+  duration_ms: 0.1085
+  type: 'test'
+  ...
+# Subtest: rejects artifact names that differ from the release contract
+ok 4 - rejects artifact names that differ from the release contract
+  ---
+  duration_ms: 0.139208
+  type: 'test'
+  ...
+# Subtest: rejects unintended extra target formats on every platform
+ok 5 - rejects unintended extra target formats on every platform
+  ---
+  duration_ms: 0.074583
+  type: 'test'
+  ...
+# Subtest: rejects unsupported or duplicate target architectures
+ok 6 - rejects unsupported or duplicate target architectures
+  ---
+  duration_ms: 0.1045
+  type: 'test'
+  ...
+# Subtest: rejects duplicate expected target definitions
+ok 7 - rejects duplicate expected target definitions
+  ---
+  duration_ms: 0.054625
+  type: 'test'
+  ...
+# Subtest: accepts approved target and architecture entries in any order
+ok 8 - accepts approved target and architecture entries in any order
+  ---
+  duration_ms: 0.046083
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 32.608333
+
+```text
+$ npm run check:desktop-release-config
+```
+
+> codex-pet-pause@0.2.0 check:desktop-release-config
+> node scripts/verify-desktop-release-config.mjs
+
+Desktop release configuration is valid.
