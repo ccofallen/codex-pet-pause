@@ -39,7 +39,52 @@ test('requires exact public artifact filenames', () => {
     'prefix-Codex-Pet-Pause-0.2.0-mac-arm64.dmg',
     'Codex-Pet-Pause-0x2x0-mac-x64.dmg',
   ], '0.2.0', 'mac');
-  assert.equal(failures.length, 2);
+  assert.equal(failures.length, 4);
+  assert.ok(failures.some((failure) => failure.includes('Unexpected release artifact: prefix-')));
+  assert.ok(failures.some((failure) => failure.includes('Unexpected release artifact: Codex-Pet-Pause-0x2x0')));
+});
+
+test('rejects stale or cross-platform public packages for the selected scope', () => {
+  const failures = verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(0, 2),
+    completeInstallerSet[2],
+    'Codex-Pet-Pause-0.1.0-mac-arm64.dmg',
+  ], '0.2.0', 'mac');
+  assert.deepEqual(failures, [
+    `Unexpected release artifact: ${completeInstallerSet[2]}`,
+    'Unexpected release artifact: Codex-Pet-Pause-0.1.0-mac-arm64.dmg',
+  ]);
+});
+
+test('tolerates only known electron-builder metadata during platform packaging', () => {
+  assert.deepEqual(verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(0, 2),
+    'builder-debug.yml',
+    'builder-effective-config.yaml',
+    'latest-mac.yml',
+  ], '0.2.0', 'mac'), []);
+
+  const failures = verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(0, 2),
+    'latest.yml',
+    'notes.txt',
+  ], '0.2.0', 'mac');
+  assert.deepEqual(failures, [
+    'Unexpected release artifact: latest.yml',
+    'Unexpected release artifact: notes.txt',
+  ]);
+});
+
+test('rejects all metadata and unknown files in the complete release asset set', () => {
+  const failures = verifyReleaseArtifacts([
+    ...completeInstallerSet,
+    'builder-effective-config.yaml',
+    'latest-mac.yml',
+  ], '0.2.0');
+  assert.deepEqual(failures, [
+    'Unexpected release artifact: builder-effective-config.yaml',
+    'Unexpected release artifact: latest-mac.yml',
+  ]);
 });
 
 test('the executable --platform option validates only that platform', async () => {
@@ -80,6 +125,26 @@ test('the executable rejects zero-byte and non-regular expected artifacts', asyn
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-arm64\.dmg/);
     assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-x64\.dmg/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the executable rejects an unexpected zero-byte stale package', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-pet-release-stale-'));
+  const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
+
+  try {
+    for (const fileName of completeInstallerSet.slice(0, 2)) {
+      await writeFile(join(directory, fileName), 'package');
+    }
+    await writeFile(join(directory, 'Codex-Pet-Pause-0.1.0-mac-x64.dmg'), '');
+
+    const result = spawnSync(process.execPath, [script, directory, '--platform', 'mac'], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Unexpected release artifact: Codex-Pet-Pause-0\.1\.0-mac-x64\.dmg/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

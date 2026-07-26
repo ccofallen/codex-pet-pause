@@ -33,8 +33,10 @@
     "test:verify-deployment-build": "node scripts/test-verify-deployment-build.mjs",
     "check": "npm run typecheck && npm run test:run && npm run build && npm run check:release-dist && npm run test:e2e && npm run check:release-dist",
     "desktop:smoke": "bash scripts/desktop-smoke.sh",
+    "desktop:smoke:packaged-resources": "node scripts/verify-packaged-resources.mjs dist",
+    "desktop:smoke:packaged-app": "node scripts/verify-packaged-app.mjs release",
     "desktop:dev": "npm run desktop:launch:dev",
-    "desktop:build": "npm run build",
+    "desktop:build": "tsc -b && vite build --mode desktop",
     "start": "npm run build && ./node_modules/.bin/electron .",
     "start:direct": "npm run build && ./node_modules/.bin/electron . --no-sandbox",
     "desktop:dev:server": "vite --host 127.0.0.1",
@@ -52,7 +54,10 @@
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs",
     "test:release-artifacts": "node --test scripts/verify-release-artifacts.test.mjs",
-    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:release-artifacts && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build"
+    "test:release-tag": "node --test scripts/verify-release-tag.test.mjs",
+    "test:packaged-resources": "node --test scripts/verify-packaged-resources.test.mjs",
+    "test:packaged-app": "node --test scripts/verify-packaged-app.test.mjs",
+    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",
@@ -61,6 +66,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
+    "@electron/asar": "^3.4.1",
     "@playwright/test": "^1.55.0",
     "@testing-library/jest-dom": "^6.9.0",
     "@testing-library/react": "^16.3.0",

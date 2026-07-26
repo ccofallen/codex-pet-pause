@@ -4,6 +4,7 @@ import { App } from './app/App';
 import { AppProvider, useAppSnapshot } from './app/AppProvider';
 import { DesktopApp } from './app/DesktopApp';
 import { createAppController } from './app/appController';
+import { deriveRendererRole } from './app/rendererRole';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { createBrowserAudio } from './infrastructure/browserAudio';
@@ -11,6 +12,7 @@ import { createIndexedDbHistoryRepository } from './infrastructure/historyReposi
 import { createBrowserNotifications } from './infrastructure/browserNotifications';
 import { createIndexedDbPetRepository } from './infrastructure/petRepository';
 import { createBrowserSettingsRepository } from './infrastructure/settingsRepository';
+import { createSynchronizedSettingsRepository } from './infrastructure/synchronizedSettingsRepository';
 import { registerPwaServiceWorker } from './infrastructure/pwaStatus';
 import { I18nProvider } from './i18n/I18nProvider';
 import { detectPreferredLocale } from './i18n/locale';
@@ -21,8 +23,9 @@ import './styles/global.css';
 if (import.meta.env.PROD) void registerPwaServiceWorker();
 
 const query = new URLSearchParams(window.location.search);
-const isDesktopMode = query.get('mode') === 'desktop';
-const isSettingsMode = query.get('mode') === 'settings' || query.get('hidePet') === '1';
+const rendererRole = deriveRendererRole(window.location.search, window.petShell !== undefined);
+const isDesktopMode = rendererRole.view === 'desktop';
+const isSettingsMode = rendererRole.view === 'settings';
 const section = query.get('view') === 'reminders' || query.get('section') === 'reminders' ? 'reminders' : 'general';
 const defaultLocale = detectPreferredLocale(navigator.languages);
 document.documentElement.lang = defaultLocale;
@@ -46,7 +49,15 @@ if (isDesktopMode) {
 
 const controller = createAppController({
   clock: { now: () => import.meta.env.VITE_NEKO_E2E === '1' ? window.__NEKO_TEST_NOW__ ?? Date.now() : Date.now() },
-  settings: createBrowserSettingsRepository(window.localStorage, defaultLocale),
+  settings: createSynchronizedSettingsRepository(
+    createBrowserSettingsRepository(window.localStorage, defaultLocale),
+    window.localStorage,
+    {
+      conflictPolicy: rendererRole.lifecycle === 'passive'
+        ? 'replay-user-operation'
+        : 'reject',
+    },
+  ),
   history: createIndexedDbHistoryRepository(window.indexedDB),
   pets: createIndexedDbPetRepository(window.indexedDB),
   notifications: createBrowserNotifications(),
@@ -64,5 +75,12 @@ function RendererApp() {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode><AppProvider controller={controller}><RendererApp /></AppProvider></StrictMode>,
+  <StrictMode>
+    <AppProvider
+      controller={controller}
+      lifecycle={rendererRole.lifecycle}
+    >
+      <RendererApp />
+    </AppProvider>
+  </StrictMode>,
 );

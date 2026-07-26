@@ -10,7 +10,7 @@ function normalizeBasePath(value: string | undefined): string {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const base = normalizeBasePath(env.VITE_BASE_PATH);
+  const base = mode === 'desktop' ? './' : normalizeBasePath(env.VITE_BASE_PATH);
   return {
     base,
     plugins: [

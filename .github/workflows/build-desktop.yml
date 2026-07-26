@@ -24,9 +24,13 @@ jobs:
       - run: npm run test:brand-assets
       - run: npm run test:desktop-workflow
       - run: npm run test:release-artifacts
+      - run: npm run test:release-tag
+      - run: npm run test:packaged-resources
+      - run: npm run test:packaged-app
       - run: npm run check:desktop-release-config
       - run: npm run test:run
       - run: npm run build
+      - run: npm run test:e2e
       - name: Validate workflow syntax with actionlint
         run: docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml
 
@@ -67,7 +71,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: node scripts/verify-release-tag.mjs "${{ github.ref_name }}"
       - run: ${{ matrix.command }}
+      - run: npm run desktop:smoke:packaged-app
       - run: node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
         with:
@@ -84,6 +90,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: node scripts/verify-release-tag.mjs "${{ github.ref_name }}"
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -94,7 +101,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME"; then
-            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+            gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+            done
+            gh release upload "$GITHUB_REF_NAME" release-assets/*
           else
             gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"
           fi

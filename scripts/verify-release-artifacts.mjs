@@ -3,6 +3,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const supportedPlatforms = new Set(['all', 'mac', 'windows', 'linux']);
+const commonBuilderMetadata = ['builder-debug.yml', 'builder-effective-config.yaml'];
+const platformBuilderMetadata = {
+  mac: ['latest-mac.yml'],
+  windows: ['latest.yml'],
+  linux: ['latest-linux.yml'],
+};
 
 function escapeRegularExpression(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -44,10 +50,35 @@ export function verifyReleaseArtifacts(fileNames, version, platform = 'all') {
     throw new Error(`Unsupported platform: ${platform}`);
   }
 
-  return expectedArtifacts(version)
-    .filter((artifact) => platform === 'all' || artifact.platform === platform)
-    .filter((artifact) => !fileNames.some((fileName) => artifact.pattern.test(fileName)))
+  const entries = fileNames.map((entry) => (
+    typeof entry === 'string'
+      ? { name: entry, isFile: true, size: 1 }
+      : entry
+  ));
+  const expected = expectedArtifacts(version)
+    .filter((artifact) => platform === 'all' || artifact.platform === platform);
+  const expectedNames = new Set(expected.map((artifact) => artifact.fileName));
+  const allowedMetadata = new Set(
+    platform === 'all'
+      ? []
+      : [...commonBuilderMetadata, ...platformBuilderMetadata[platform]],
+  );
+  const failures = expected
+    .filter((artifact) => !entries.some(
+      (entry) => entry.name === artifact.fileName && entry.isFile && entry.size > 0,
+    ))
     .map((artifact) => `Missing release artifact: ${artifact.fileName}`);
+
+  for (const entry of entries) {
+    if (
+      entry.isFile
+      && !expectedNames.has(entry.name)
+      && !allowedMetadata.has(entry.name)
+    ) {
+      failures.push(`Unexpected release artifact: ${entry.name}`);
+    }
+  }
+  return failures;
 }
 
 function parseArguments(args) {
@@ -69,7 +100,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const fileNames = [];
   for (const entry of entries) {
     const details = await lstat(join(directory, entry.name));
-    if (details.isFile() && details.size > 0) fileNames.push(entry.name);
+    fileNames.push({
+      name: entry.name,
+      isFile: details.isFile(),
+      size: details.size,
+    });
   }
   const packageJson = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),

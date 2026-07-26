@@ -12,6 +12,9 @@ const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /wor
 const tagPushCondition = "github.event_name=='push'&&startsWith(github.ref,'refs/tags/v')";
 const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}';
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
+const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
+const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
+const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
 
 function hasNeed(job, expectedNeed) {
   const needs = job?.needs;
@@ -43,6 +46,18 @@ export function verifyDesktopWorkflow(workflow) {
   }
   if (!hasRun(jobs.validate, 'npm run test:release-artifacts')) {
     failures.push('validate job must run release artifact tests');
+  }
+  if (!hasRun(jobs.validate, 'npm run test:release-tag')) {
+    failures.push('validate job must run release tag tests');
+  }
+  if (!hasRun(jobs.validate, 'npm run test:packaged-resources')) {
+    failures.push('validate job must run packaged resource tests');
+  }
+  if (!hasRun(jobs.validate, 'npm run test:packaged-app')) {
+    failures.push('validate job must run packaged app tests');
+  }
+  if (!hasRun(jobs.validate, 'npm run test:e2e')) {
+    failures.push('validate job must run existing E2E tests');
   }
   const actionlint = jobs.validate?.steps?.find(
     (step) => step.name === 'Validate workflow syntax with actionlint',
@@ -80,6 +95,20 @@ export function verifyDesktopWorkflow(workflow) {
   }
   const packageSteps = jobs.package?.steps ?? [];
   const matrixCommandIndex = packageSteps.findIndex((step) => step.run === '${{ matrix.command }}');
+  const packageTagVersionIndexes = packageSteps
+    .map((step, index) => step.run === tagVersionRun ? index : -1)
+    .filter((index) => index >= 0);
+  if (
+    packageTagVersionIndexes.length !== 1
+    || packageTagVersionIndexes[0] >= matrixCommandIndex
+  ) {
+    failures.push(
+      'package job must use a portable tag expression before packaging; exact tag version before packaging is required',
+    );
+  }
+  const packagedAppSmokeIndexes = packageSteps
+    .map((step, index) => step.run === packagedAppSmokeRun ? index : -1)
+    .filter((index) => index >= 0);
   const packageValidationIndexes = packageSteps
     .map((step, index) => step.run === packageArtifactValidationRun ? index : -1)
     .filter((index) => index >= 0);
@@ -94,6 +123,13 @@ export function verifyDesktopWorkflow(workflow) {
     || packageValidationIndexes[0] >= artifactUploadIndex
   ) {
     failures.push('package artifact validation must run after the matrix command and before upload');
+  }
+  if (
+    packagedAppSmokeIndexes.length !== 1
+    || packagedAppSmokeIndexes[0] <= matrixCommandIndex
+    || packagedAppSmokeIndexes[0] >= packageValidationIndexes[0]
+  ) {
+    failures.push('package job must run packaged app smoke after packaging and before artifact validation');
   }
   if (artifactUpload?.with?.path !== '${{ matrix.artifact }}') {
     failures.push('package artifact upload must use the matrix artifact path');
@@ -117,7 +153,19 @@ export function verifyDesktopWorkflow(workflow) {
     .map((step, index) => step.run === releaseArtifactValidationRun ? index : -1)
     .filter((index) => index >= 0);
   const publishIndex = releaseSteps.findIndex((step) => step.name === 'Publish release assets');
+  const releaseTagVersionIndexes = releaseSteps
+    .map((step, index) => step.run === tagVersionRun ? index : -1)
+    .filter((index) => index >= 0);
   if (checkoutIndex < 0) failures.push('release job must check out the validator source');
+  if (
+    releaseTagVersionIndexes.length !== 1
+    || releaseTagVersionIndexes[0] <= checkoutIndex
+    || releaseTagVersionIndexes[0] >= publishIndex
+  ) {
+    failures.push(
+      'release job must use a portable tag expression before publishing; exact tag version before publishing is required',
+    );
+  }
   if (download?.with?.path !== 'release-assets') {
     failures.push('release download must use release-assets');
   }
@@ -136,6 +184,10 @@ export function verifyDesktopWorkflow(workflow) {
     ) {
       failures.push('release artifact validation must run after download and before publishing');
     }
+  }
+  const publish = releaseSteps[publishIndex];
+  if (publish?.run !== publishRun) {
+    failures.push('release reruns must delete existing release assets before publishing');
   }
 
   return failures;
