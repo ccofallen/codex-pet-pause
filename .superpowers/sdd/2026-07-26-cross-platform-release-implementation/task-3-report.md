@@ -56,3 +56,29 @@ npm run test:desktop-release-config && npm run check:desktop-release-config && n
 
 - This task validates the release contract and frontend production bundle only. It does not produce platform installers on this host.
 - GitHub Actions were intentionally left unchanged, per task scope.
+
+## Fix Round 1: Exact Architectures and Unique Target Entries
+
+### RED
+
+Ran:
+
+```bash
+npm run test:desktop-release-config
+```
+
+- Result: 5 passed, 2 failed.
+- `rejects unsupported or duplicate target architectures` failed because the validator accepted extra and duplicate architectures.
+- `rejects duplicate expected target definitions` failed because the map-based target lookup collapsed duplicate entries.
+
+### GREEN
+
+Ran:
+
+```bash
+npm run test:desktop-release-config && npm run check:desktop-release-config
+```
+
+- `test:desktop-release-config`: 7 passed, 0 failed.
+- `check:desktop-release-config`: printed `Desktop release configuration is valid.`
+- The validator now requires exactly one expected target entry per platform target and exact, order-insensitive, duplicate-free architecture lists.

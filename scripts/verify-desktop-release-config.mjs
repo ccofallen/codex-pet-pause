@@ -13,10 +13,15 @@ const expected = {
   linuxArtifactName: 'Codex-Pet-Pause-${version}-linux-${arch}.${ext}',
 };
 
-function targetsFor(platform) {
-  return new Map(
-    (platform?.target ?? []).map(({ target, arch }) => [target, arch ?? []]),
-  );
+function targetEntriesFor(platform, target) {
+  return (platform?.target ?? []).filter((entry) => entry.target === target);
+}
+
+function hasExactlyArchitectures(architectures, expectedArchitectures) {
+  return Array.isArray(architectures)
+    && architectures.length === expectedArchitectures.length
+    && new Set(architectures).size === expectedArchitectures.length
+    && expectedArchitectures.every((architecture) => architectures.includes(architecture));
 }
 
 export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync) {
@@ -25,28 +30,41 @@ export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync)
   if (build.appId !== expected.appId) failures.push(`appId must be ${expected.appId}`);
   if (build.productName !== expected.productName) failures.push(`productName must be ${expected.productName}`);
 
-  const macTargets = targetsFor(build.mac);
-  if (macTargets.size !== 1 || !macTargets.has('dmg')) {
+  const macTargetEntries = build.mac?.target ?? [];
+  const macDmgEntries = targetEntriesFor(build.mac, 'dmg');
+  if (macTargetEntries.length !== 1 || macDmgEntries.length !== 1) {
     failures.push('macOS targets must be exactly dmg');
+    failures.push('macOS targets must be exactly one dmg entry');
   }
-  if (!macTargets.get('dmg')?.includes('arm64') || !macTargets.get('dmg')?.includes('x64')) {
-    failures.push('macOS DMG must target arm64 and x64');
+  if (!hasExactlyArchitectures(macDmgEntries[0]?.arch, ['arm64', 'x64'])) {
+    failures.push('macOS DMG must target exactly arm64 and x64');
   }
-  const winTargets = targetsFor(build.win);
-  if (winTargets.size !== 1 || !winTargets.has('nsis')) {
+  const winTargetEntries = build.win?.target ?? [];
+  const winNsisEntries = targetEntriesFor(build.win, 'nsis');
+  if (winTargetEntries.length !== 1 || winNsisEntries.length !== 1) {
     failures.push('Windows targets must be exactly nsis');
+    failures.push('Windows targets must be exactly one nsis entry');
   }
-  if (!winTargets.get('nsis')?.includes('x64')) failures.push('Windows NSIS must target x64');
-  const linuxTargets = targetsFor(build.linux);
+  if (!hasExactlyArchitectures(winNsisEntries[0]?.arch, ['x64'])) {
+    failures.push('Windows NSIS must target exactly x64');
+  }
+  const linuxTargetEntries = build.linux?.target ?? [];
+  const linuxAppImageEntries = targetEntriesFor(build.linux, 'AppImage');
+  const linuxDebEntries = targetEntriesFor(build.linux, 'deb');
   if (
-    linuxTargets.size !== 2 ||
-    !linuxTargets.has('AppImage') ||
-    !linuxTargets.has('deb')
+    linuxTargetEntries.length !== 2 ||
+    linuxAppImageEntries.length !== 1 ||
+    linuxDebEntries.length !== 1
   ) {
     failures.push('Linux targets must be exactly AppImage and deb');
+    failures.push('Linux targets must be exactly one AppImage entry and one deb entry');
   }
-  if (!linuxTargets.get('AppImage')?.includes('x64')) failures.push('Linux AppImage must target x64');
-  if (!linuxTargets.get('deb')?.includes('x64')) failures.push('Linux DEB must target x64');
+  if (!hasExactlyArchitectures(linuxAppImageEntries[0]?.arch, ['x64'])) {
+    failures.push('Linux AppImage must target exactly x64');
+  }
+  if (!hasExactlyArchitectures(linuxDebEntries[0]?.arch, ['x64'])) {
+    failures.push('Linux DEB must target exactly x64');
+  }
 
   for (const [label, platform, artifactName] of [
     ['macOS artifact name', 'mac', expected.macArtifactName],

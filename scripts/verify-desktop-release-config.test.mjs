@@ -86,3 +86,27 @@ test('rejects unintended extra target formats on every platform', () => {
   assert.ok(failures.some((failure) => failure.includes('Windows targets must be exactly nsis')));
   assert.ok(failures.some((failure) => failure.includes('Linux targets must be exactly AppImage and deb')));
 });
+
+test('rejects unsupported or duplicate target architectures', () => {
+  const invalid = structuredClone(validPackage);
+  invalid.build.mac.target[0].arch.push('arm64');
+  invalid.build.win.target[0].arch.push('arm64');
+  invalid.build.linux.target[0].arch.push('arm64');
+  invalid.build.linux.target[1].arch.push('x64');
+  const failures = verifyDesktopReleaseConfig(invalid, () => true);
+  assert.ok(failures.some((failure) => failure.includes('macOS DMG must target exactly arm64 and x64')));
+  assert.ok(failures.some((failure) => failure.includes('Windows NSIS must target exactly x64')));
+  assert.ok(failures.some((failure) => failure.includes('Linux AppImage must target exactly x64')));
+  assert.ok(failures.some((failure) => failure.includes('Linux DEB must target exactly x64')));
+});
+
+test('rejects duplicate expected target definitions', () => {
+  const invalid = structuredClone(validPackage);
+  invalid.build.mac.target.push({ target: 'dmg', arch: ['arm64', 'x64'] });
+  invalid.build.win.target.push({ target: 'nsis', arch: ['x64'] });
+  invalid.build.linux.target.push({ target: 'AppImage', arch: ['x64'] });
+  const failures = verifyDesktopReleaseConfig(invalid, () => true);
+  assert.ok(failures.some((failure) => failure.includes('macOS targets must be exactly one dmg entry')));
+  assert.ok(failures.some((failure) => failure.includes('Windows targets must be exactly one nsis entry')));
+  assert.ok(failures.some((failure) => failure.includes('Linux targets must be exactly one AppImage entry and one deb entry')));
+});
