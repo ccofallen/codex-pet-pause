@@ -9,6 +9,7 @@ const expectedPackages = [
   ['linux-x64', 'linux-x64', 'ubuntu-latest', 'npm run desktop:pack:linux -- --x64', 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n'],
 ];
 const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml';
+const playwrightInstallRun = 'npx playwright install --with-deps chromium';
 const tagPushCondition = "github.event_name=='push'&&startsWith(github.ref,'refs/tags/v')";
 const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}';
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
@@ -41,6 +42,23 @@ export function verifyDesktopWorkflow(workflow) {
   const jobs = workflow?.jobs ?? {};
   if (!jobs.validate) failures.push('validate job is required');
   if (!hasRun(jobs.validate, 'npm ci')) failures.push('validate job must run npm ci');
+  const validateSteps = jobs.validate?.steps ?? [];
+  const validateNpmCiIndex = validateSteps.findIndex((step) => step.run === 'npm ci');
+  const validateE2eIndex = validateSteps.findIndex((step) => step.run === 'npm run test:e2e');
+  const playwrightInstallIndexes = validateSteps
+    .map((step, index) => step.run === playwrightInstallRun ? index : -1)
+    .filter((index) => index >= 0);
+  if (playwrightInstallIndexes.length !== 1) {
+    failures.push('validate job must install Playwright Chromium with Linux dependencies exactly once');
+  } else if (
+    playwrightInstallIndexes[0] <= validateNpmCiIndex
+    || validateE2eIndex < 0
+    || playwrightInstallIndexes[0] >= validateE2eIndex
+  ) {
+    failures.push(
+      'validate job must install Playwright Chromium after npm ci and before existing E2E tests',
+    );
+  }
   if (!hasRun(jobs.validate, 'npm run test:desktop-workflow')) {
     failures.push('validate job must run desktop workflow tests');
   }

@@ -6,6 +6,7 @@ import { verifyDesktopWorkflow } from './verify-desktop-workflow.mjs';
 
 const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml';
 const tagPushCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')";
+const playwrightInstallRun = 'npx playwright install --with-deps chromium';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
 const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
@@ -27,6 +28,7 @@ const validWorkflow = {
         { uses: 'actions/checkout@v4' },
         { uses: 'actions/setup-node@v4', with: { 'node-version': 22, cache: 'npm' } },
         { run: 'npm ci' },
+        { run: playwrightInstallRun },
         { run: 'npm run test:desktop-release-config' },
         { run: 'npm run test:brand-assets' },
         { run: 'npm run test:desktop-workflow' },
@@ -191,6 +193,44 @@ test('rejects validation that skips tag, packaged-resource, packaged-app, or E2E
   assert.ok(failures.some((failure) => failure.includes('packaged resource tests')));
   assert.ok(failures.some((failure) => failure.includes('packaged app tests')));
   assert.ok(failures.some((failure) => failure.includes('existing E2E tests')));
+});
+
+test('rejects validation without Playwright Chromium and Linux dependencies', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.validate.steps = invalid.jobs.validate.steps.filter(
+    (step) => step.run !== playwrightInstallRun,
+  );
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some(
+      (failure) => failure.includes('install Playwright Chromium with Linux dependencies'),
+    ),
+  );
+});
+
+test('rejects a Chromium install command that omits Linux dependencies', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.validate.steps.find((step) => step.run === playwrightInstallRun).run =
+    'npx playwright install chromium';
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some(
+      (failure) => failure.includes('install Playwright Chromium with Linux dependencies'),
+    ),
+  );
+});
+
+test('rejects Playwright browser installation after E2E', () => {
+  const invalid = structuredClone(validWorkflow);
+  const steps = invalid.jobs.validate.steps;
+  const install = steps.splice(
+    steps.findIndex((step) => step.run === playwrightInstallRun),
+    1,
+  )[0];
+  steps.splice(steps.findIndex((step) => step.run === 'npm run test:e2e') + 1, 0, install);
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some(
+      (failure) => failure.includes('after npm ci and before existing E2E tests'),
+    ),
+  );
 });
 
 test('rejects package and release jobs that run outside tag pushes', () => {
