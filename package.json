@@ -1,7 +1,7 @@
 {
   "name": "codex-pet-pause",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
   "license": "MIT",
   "repository": {

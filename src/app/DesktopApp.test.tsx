@@ -19,9 +19,10 @@ test('renders desktop shell with builtin cat by default', async () => {
   expect(screen.queryByTestId('pet-stage')).not.toBeInTheDocument();
 });
 
-test('opens desktop context menu on right click', async () => {
+test('routes drag and right-click pointer input through the desktop shell', async () => {
   const showContextMenu = vi.fn();
-  window.petShell = { showContextMenu, dragWindowTo: vi.fn() };
+  const dragWindowTo = vi.fn();
+  window.petShell = { showContextMenu, dragWindowTo };
 
   const controller = createAppController(createFakeDependencies({ now: 1 }));
   render(<AppProvider controller={controller}><DesktopApp /></AppProvider>);
@@ -31,6 +32,23 @@ test('opens desktop context menu on right click', async () => {
   });
 
   const cat = await screen.findByRole('button', { name: '摸摸 Momo' });
+  fireEvent.pointerDown(cat, {
+    pointerId: 1,
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    screenX: 110,
+    screenY: 220,
+  });
+  fireEvent.pointerMove(cat, {
+    pointerId: 1,
+    clientX: 20,
+    clientY: 30,
+    screenX: 120,
+    screenY: 230,
+  });
+  expect(dragWindowTo).toHaveBeenCalledWith(110, 210);
+
   fireEvent.contextMenu(cat, { screenX: 640, screenY: 360 });
   expect(showContextMenu).toHaveBeenCalledOnce();
   expect(showContextMenu).toHaveBeenCalledWith(640, 360);
