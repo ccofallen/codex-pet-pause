@@ -46,12 +46,12 @@ jobs:
           - id: mac-arm64
             target: mac-arm64
             os: macos-latest
-            command: npm run desktop:pack:mac -- --arm64
+            command: npm run desktop:pack -- --mac --arm64
             artifact: release/*-mac-arm64.dmg
           - id: mac-x64
             target: mac-x64
             os: macos-latest
-            command: npm run desktop:pack:mac -- --x64
+            command: npm run desktop:pack -- --mac --x64
             artifact: release/*-mac-x64.dmg
           - id: windows-x64
             target: windows-x64

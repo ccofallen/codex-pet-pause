@@ -54,14 +54,14 @@ const validWorkflow = {
               id: 'mac-arm64',
               target: 'mac-arm64',
               os: 'macos-latest',
-              command: 'npm run desktop:pack:mac -- --arm64',
+              command: 'npm run desktop:pack -- --mac --arm64',
               artifact: 'release/*-mac-arm64.dmg',
             },
             {
               id: 'mac-x64',
               target: 'mac-x64',
               os: 'macos-latest',
-              command: 'npm run desktop:pack:mac -- --x64',
+              command: 'npm run desktop:pack -- --mac --x64',
               artifact: 'release/*-mac-x64.dmg',
             },
             {
@@ -249,6 +249,17 @@ test('rejects a workflow with a missing native package target or command', () =>
   const failures = verifyDesktopWorkflow(invalid);
   assert.ok(failures.some((failure) => failure.includes('mac-arm64 command')));
   assert.ok(failures.some((failure) => failure.includes('linux-x64')));
+});
+
+test('rejects mac matrix commands that inherit the local dual-arch wrapper', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.strategy.matrix.include[0].command =
+    'npm run desktop:pack:mac -- --arm64';
+  invalid.jobs.package.strategy.matrix.include[1].command =
+    'npm run desktop:pack:mac -- --x64';
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('mac-arm64 command')));
+  assert.ok(failures.some((failure) => failure.includes('mac-x64 command')));
 });
 
 test('rejects packaging without npm ci or a protected matrix artifact upload', () => {

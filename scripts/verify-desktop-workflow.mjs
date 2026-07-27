@@ -3,8 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
 const expectedPackages = [
-  ['mac-arm64', 'mac-arm64', 'macos-latest', 'npm run desktop:pack:mac -- --arm64', 'release/*-mac-arm64.dmg'],
-  ['mac-x64', 'mac-x64', 'macos-latest', 'npm run desktop:pack:mac -- --x64', 'release/*-mac-x64.dmg'],
+  ['mac-arm64', 'mac-arm64', 'macos-latest', 'npm run desktop:pack -- --mac --arm64', 'release/*-mac-arm64.dmg'],
+  ['mac-x64', 'mac-x64', 'macos-latest', 'npm run desktop:pack -- --mac --x64', 'release/*-mac-x64.dmg'],
   ['windows-x64', 'windows-x64', 'windows-latest', 'npm run desktop:pack:win -- --x64', 'release/*-windows-x64.exe'],
   ['linux-x64', 'linux-x64', 'ubuntu-latest', 'npm run desktop:pack:linux -- --x64', 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n'],
 ];
