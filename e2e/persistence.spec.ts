@@ -361,7 +361,7 @@ test('clears local settings and IndexedDB history after confirmation', async ({ 
   await openWaitingCat(page);
   await page.getByRole('button', { name: '现在做' }).click();
   await page.getByRole('button', { name: '完成了' }).click();
-  await page.getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('button', { name: '清除全部本地数据' }).click();
   await page.getByLabel('我了解本机数据将被删除').check();

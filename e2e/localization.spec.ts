@@ -253,7 +253,8 @@ test('supports English settings navigation and a reminder action with the keyboa
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Done' })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByText('Drink water completed')).toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('cat-stage')).toBeFocused();
 });
 
 for (const viewport of [

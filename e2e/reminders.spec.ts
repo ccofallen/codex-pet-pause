@@ -95,8 +95,6 @@ test('supports complete, snooze with 10-minute focus, and skip', async ({ page }
   await expect(page.getByRole('dialog', { name: '目视远方提醒' })).toBeVisible();
   await page.getByRole('button', { name: '现在做' }).click();
   await page.getByRole('button', { name: '完成了' }).click();
-  await expect(page.getByRole('status', { name: '' }).filter({ hasText: '目视远方已完成' })).toBeVisible();
-  await page.getByRole('button', { name: '继续下一项' }).click();
 
   await expect(page.getByRole('dialog', { name: '喝水提醒' })).toBeVisible();
   await page.getByRole('button', { name: '稍后提醒' }).click();
