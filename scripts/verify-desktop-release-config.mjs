@@ -8,9 +8,13 @@ const expected = {
   macIcon: 'build/icons/icon.icns',
   winIcon: 'build/icons/icon.ico',
   linuxIcon: 'build/icons/png',
+  authorName: 'ccofallen',
+  authorEmail: 'ccofallen@users.noreply.github.com',
+  linuxMaintainer: 'ccofallen <ccofallen@users.noreply.github.com>',
+  localMacPackageCommand: 'npm run desktop:pack -- --mac --arm64 --x64',
   macArtifactName: 'Codex-Pet-Pause-${version}-mac-${arch}.${ext}',
   winArtifactName: 'Codex-Pet-Pause-${version}-windows-${arch}.${ext}',
-  linuxArtifactName: 'Codex-Pet-Pause-${version}-linux-${arch}.${ext}',
+  linuxArtifactName: 'Codex-Pet-Pause-${version}-linux-x64.${ext}',
 };
 
 function targetEntriesFor(platform, target) {
@@ -27,6 +31,17 @@ function hasExactlyArchitectures(architectures, expectedArchitectures) {
 export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync) {
   const failures = [];
   const build = packageJson.build ?? {};
+  if (
+    packageJson.author?.name !== expected.authorName
+    || packageJson.author?.email !== expected.authorEmail
+  ) {
+    failures.push(
+      `author must be ${expected.authorName} <${expected.authorEmail}>`,
+    );
+  }
+  if (build.linux?.maintainer !== expected.linuxMaintainer) {
+    failures.push(`Linux maintainer must be ${expected.linuxMaintainer}`);
+  }
   if (build.appId !== expected.appId) failures.push(`appId must be ${expected.appId}`);
   if (build.productName !== expected.productName) failures.push(`productName must be ${expected.productName}`);
 
@@ -36,8 +51,11 @@ export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync)
     failures.push('macOS targets must be exactly dmg');
     failures.push('macOS targets must be exactly one dmg entry');
   }
-  if (!hasExactlyArchitectures(macDmgEntries[0]?.arch, ['arm64', 'x64'])) {
-    failures.push('macOS DMG must target exactly arm64 and x64');
+  if (macDmgEntries[0]?.arch !== undefined) {
+    failures.push('macOS architecture must be selected by the command, not embedded in build.mac.target');
+  }
+  if (packageJson.scripts?.['desktop:pack:mac'] !== expected.localMacPackageCommand) {
+    failures.push(`local mac package command must be ${expected.localMacPackageCommand}`);
   }
   const winTargetEntries = build.win?.target ?? [];
   const winNsisEntries = targetEntriesFor(build.win, 'nsis');

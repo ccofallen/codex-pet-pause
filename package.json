@@ -9,6 +9,10 @@
     "url": "https://github.com/ccofallen/codex-pet-pause.git"
   },
   "homepage": "https://ccofallen.github.io/codex-pet-pause/",
+  "author": {
+    "name": "ccofallen",
+    "email": "ccofallen@users.noreply.github.com"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -45,7 +49,7 @@
     "desktop:launch:dev": "concurrently -k \"npm run desktop:dev:server\" \"wait-on tcp:5173 && ./node_modules/.bin/electron . --dev\"",
     "desktop:package": "npm run desktop:pack",
     "desktop:pack": "npm run desktop:build && electron-builder --publish=never",
-    "desktop:pack:mac": "npm run desktop:pack -- --mac",
+    "desktop:pack:mac": "npm run desktop:pack -- --mac --arm64 --x64",
     "desktop:pack:win": "npm run desktop:pack -- --win",
     "desktop:pack:linux": "npm run desktop:pack -- --linux",
     "test:desktop-release-config": "node --test scripts/verify-desktop-release-config.test.mjs",
@@ -112,11 +116,7 @@
       "icon": "build/icons/icon.icns",
       "target": [
         {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
+          "target": "dmg"
         }
       ],
       "artifactName": "Codex-Pet-Pause-${version}-mac-${arch}.${ext}"
@@ -135,6 +135,7 @@
     },
     "linux": {
       "icon": "build/icons/png",
+      "maintainer": "ccofallen <ccofallen@users.noreply.github.com>",
       "category": "Utility",
       "target": [
         {
@@ -150,7 +151,7 @@
           ]
         }
       ],
-      "artifactName": "Codex-Pet-Pause-${version}-linux-${arch}.${ext}"
+      "artifactName": "Codex-Pet-Pause-${version}-linux-x64.${ext}"
     }
   }
 }
