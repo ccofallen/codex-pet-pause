@@ -10,6 +10,7 @@ import {
   nativeImage,
   ipcMain,
 } from 'electron';
+import { resolvePetWindowPolicy } from './window-policy.js';
 
 const IS_DEV = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
 const EDGE_HANDLE_SIZE = 24;
@@ -402,6 +403,7 @@ function createWindow() {
     transparent: HAS_TRANSPARENT_WINDOW,
     show: false,
     alwaysOnTop: true,
+    ...resolvePetWindowPolicy(process.platform),
     skipTaskbar: true,
     hasShadow: false,
     icon: resolveAssetPath('pwa-192x192.png') ?? resolveAssetPath('pwa-512x512.png') ?? undefined,

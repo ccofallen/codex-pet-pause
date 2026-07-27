@@ -125,6 +125,11 @@ describe('Electron process lifecycle', () => {
     const activate = electron.appListeners.get('activate');
     const firstPetWindow = electron.windows[0];
 
+    expect(firstPetWindow.options.alwaysOnTop).toBe(true);
+    expect(firstPetWindow.options.focusable).toBe(process.platform !== 'linux');
+    expect(firstPetWindow.setVisibleOnAllWorkspaces)
+      .toHaveBeenCalledWith(true, { visibleOnFullScreen: true });
+
     firstPetWindow.destroyed = true;
     activate();
     const secondPetWindow = electron.windows.at(-1);
@@ -162,6 +167,7 @@ describe('Electron process lifecycle', () => {
       .find(([channel]) => channel === 'pet:open-settings')[1];
     openSettings();
     const firstSettingsWindow = electron.windows.at(-1);
+    expect(firstSettingsWindow.options.focusable).toBeUndefined();
     firstSettingsWindow.listeners.get('closed')();
     openSettings();
 
