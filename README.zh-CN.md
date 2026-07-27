@@ -1,5 +1,7 @@
 # Codex Pet Pause
 
+![Codex Pet Pause desktop companion](docs/assets/codex-pet-pause-desktop-cover.png)
+
 [English](README.md)
 
 > 一款由住在你电脑里的宠物陪伴、轻松有趣且本地优先的休息提醒 PWA。
@@ -27,7 +29,13 @@ Codex Pet Pause 让温和的休息不再机械。一位桌面伙伴会帮助你�
 
 Codex Pet Pause 支持兼容的 Codex 宠物 v1 和 v2 文件。可以导入仅含一个 Codex 宠物的 ZIP（一个 ZIP 中只含一个宠物），也可以选择配套的 `pet.json` 与 WebP 图集作为松散文件。ZIP 可以带外层目录，只会在当前浏览器中解压，不会上传。每个 ZIP 只能包含一个宠物，压缩前后均不得超过 32 MiB，条目不得超过 128 个；清单与图集仍分别受 64 KiB 和 16 MiB 限制。
 
-## 快速开始
+## 桌面版下载与安装
+
+请从 [Codex Pet Pause GitHub Releases 发布页](https://github.com/ccofallen/codex-pet-pause/releases)
+下载桌面伴侣。请参阅[简体中文桌面下载与安装指南](docs/DESKTOP-INSTALL.zh-CN.md)，
+或阅读[英文桌面安装指南](docs/DESKTOP-INSTALL.md)。
+
+## 贡献者快速开始
 
 环境要求：Node.js 22.12.0 或更高版本，以及 npm。
 

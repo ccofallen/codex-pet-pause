@@ -1,5 +1,7 @@
 # Codex Pet Pause
 
+![Codex Pet Pause desktop companion](docs/assets/codex-pet-pause-desktop-cover.png)
+
 [简体中文](README.zh-CN.md)
 
 > A playful, local-first break reminder PWA hosted by a pet that lives in your computer.
@@ -27,7 +29,14 @@ Codex Pet Pause makes gentle breaks feel less mechanical. A companion on your de
 
 Codex Pet Pause accepts compatible Codex pet v1 and v2 files. Import either one ZIP containing one Codex pet (one pet per ZIP), or the matching `pet.json` and WebP atlas as loose files. ZIPs may contain outer folders, are extracted only in this browser, and are never uploaded. A ZIP may contain at most one pet, must be no larger than 32 MiB compressed or expanded, and may contain at most 128 entries. The existing pet manifest and atlas limits are 64 KiB and 16 MiB.
 
-## Quick start
+## Desktop app
+
+Download the desktop companion from the [latest Codex Pet Pause GitHub
+Release](https://github.com/ccofallen/codex-pet-pause/releases). Follow the
+[English desktop download and installation guide](docs/DESKTOP-INSTALL.md), or
+read the [Simplified Chinese desktop guide](docs/DESKTOP-INSTALL.zh-CN.md).
+
+## Quick start for contributors
 
 Requirements: Node.js 22.12.0 or later and npm.
 

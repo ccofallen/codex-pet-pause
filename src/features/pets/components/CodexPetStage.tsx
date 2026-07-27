@@ -43,6 +43,9 @@ interface PointerSession {
   element: HTMLButtonElement;
   dragging: boolean;
   captured: boolean;
+  dragWindow: boolean;
+  windowOrigin: Point;
+  pointerOrigin: Point;
 }
 
 const DRAG_THRESHOLD = 6;
@@ -258,6 +261,7 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
       || pointerSessionRef.current !== undefined
       || behaviorRef.current.mode === 'failed') return;
     suppressClickRef.current = false;
+    const windowOrigin = { x: event.screenX - event.clientX, y: event.screenY - event.clientY };
     pointerSessionRef.current = {
       pointerId: event.pointerId,
       origin: { x: event.clientX, y: event.clientY },
@@ -265,6 +269,9 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
       element: event.currentTarget,
       dragging: false,
       captured: false,
+      dragWindow: typeof window.petShell?.dragWindowTo === 'function',
+      windowOrigin,
+      pointerOrigin: { x: event.screenX, y: event.screenY },
     };
   };
 
@@ -293,7 +300,15 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
     } else if (session.dragging && dx !== 0) {
       dispatchBehavior({ type: 'DRAG_STARTED', facing: dx < 0 ? 'left' : 'right' });
     }
-    if (session.dragging) updatePosition({ x: session.start.x + dx, y: session.start.y + dy });
+    if (!session.dragging) return;
+    if (session.dragWindow && typeof window.petShell?.dragWindowTo === 'function') {
+      window.petShell.dragWindowTo(
+        session.windowOrigin.x + event.screenX - session.pointerOrigin.x,
+        session.windowOrigin.y + event.screenY - session.pointerOrigin.y,
+      );
+      return;
+    }
+    updatePosition({ x: session.start.x + dx, y: session.start.y + dy });
   };
 
   const savePosition = () => {
@@ -340,6 +355,11 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
     else activatePet();
   };
 
+  const onContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    window.petShell?.showContextMenu?.(event.screenX, event.screenY);
+  };
+
   const anchor = useMemo(() => ({
     x: position.x,
     y: position.y,
@@ -370,6 +390,7 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
         onPointerCancel={(event) => finishPointer(event, 'cancel')}
         onLostPointerCapture={(event) => finishPointer(event, 'lost')}
         onClick={onClick}
+        onContextMenu={onContextMenu}
       >
         {atlas?.blob === pet.spritesheet ? (
           <PetSprite
