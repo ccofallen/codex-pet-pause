@@ -8,6 +8,7 @@ interface ActionCardProps {
   reminder: Reminder;
   countdownEndsAt?: number | undefined;
   onCountdownStarted?: ((endsAt: number) => void) | undefined;
+  onCompleted?: (() => void) | undefined;
   completionAction?: {
     label: string;
     onActivate: () => void;
@@ -18,6 +19,7 @@ export function ActionCard({
   reminder,
   countdownEndsAt,
   onCountdownStarted,
+  onCompleted,
   completionAction,
 }: ActionCardProps) {
   const { locale, t } = useI18n();
@@ -63,7 +65,8 @@ export function ActionCard({
     setCompletionPending(true);
     try {
       await controller.complete(reminder.id);
-      setCompleted(true);
+      if (onCompleted === undefined) setCompleted(true);
+      else onCompleted();
     } catch {
       // Keep the action available when its controller command does not complete.
     } finally {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 
 import { AppProvider } from '../../../app/AppProvider';
@@ -15,10 +15,11 @@ function actionView(
   controller: ReturnType<typeof createAppController>,
   reminder: Reminder,
   locale: 'zh-CN' | 'en',
+  onCompleted?: () => void,
 ) {
   return (
     <AppProvider controller={controller}>
-      <I18nProvider locale={locale}><ActionCard reminder={reminder} /></I18nProvider>
+      <I18nProvider locale={locale}><ActionCard reminder={reminder} onCompleted={onCompleted} /></I18nProvider>
     </AppProvider>
   );
 }
@@ -84,4 +85,30 @@ test('restores a running countdown from its original deadline after remounting',
 
   expect(screen.getByText('剩余 19 秒')).toBeVisible();
   vi.useRealTimers();
+});
+
+test('hands successful completion to its host without rendering confirmation', async () => {
+  const reminder = createCustomReminder('custom-medicine', '吃药', 30, NOW, true);
+  const onCompleted = vi.fn();
+  const controller = createAppController(createFakeDependencies({ now: NOW }));
+  controller.complete = vi.fn(async () => undefined);
+  render(actionView(controller, reminder, 'zh-CN', onCompleted));
+
+  fireEvent.click(screen.getByRole('button', { name: '完成了' }));
+
+  await waitFor(() => expect(onCompleted).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});
+
+test('does not notify its host when completion fails', async () => {
+  const reminder = createCustomReminder('custom-medicine', '吃药', 30, NOW, true);
+  const onCompleted = vi.fn();
+  const controller = createAppController(createFakeDependencies({ now: NOW }));
+  controller.complete = vi.fn(async () => { throw new Error('save failed'); });
+  render(actionView(controller, reminder, 'zh-CN', onCompleted));
+
+  fireEvent.click(screen.getByRole('button', { name: '完成了' }));
+
+  await waitFor(() => expect(screen.getByRole('button', { name: '完成了' })).toBeEnabled());
+  expect(onCompleted).not.toHaveBeenCalled();
 });
