@@ -280,18 +280,6 @@ export function CatReminderBubble({
     void controller.snooze(current.reminderId, minutes);
   };
 
-  const nextReminderIsWaiting = actionVisible
-    && current !== undefined
-    && current.reminderId !== displayedReminder.id;
-  const leaveCompletedAction = () => {
-    setActionOpen(false);
-    setActionReminder(undefined);
-    setSnoozeOpen(false);
-    if (nextReminderIsWaiting) return;
-    onRequestClose();
-    returnFocusRef.current?.focus();
-  };
-
   return (
     <section
       ref={bubbleRef}
@@ -319,9 +307,16 @@ export function CatReminderBubble({
                 setCountdown({ occurrenceKey: actionOccurrenceKey, endsAt });
               }
             }}
-            completionAction={{
-              label: nextReminderIsWaiting ? t('pet.reminder.continue') : t('pet.reminder.close'),
-              onActivate: leaveCompletedAction,
+            onCompleted={() => {
+              setActionOpen(false);
+              setActionReminder(undefined);
+              setActionOccurrenceKey(undefined);
+              setCountdown(undefined);
+              setSnoozeOpen(false);
+              if (controller.getSnapshot().scheduler.dueQueue.length === 0) {
+                onRequestClose();
+                returnFocusRef.current?.focus();
+              }
             }}
           />
         ) : (
