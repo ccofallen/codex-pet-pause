@@ -23,6 +23,7 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:electron": "vitest run --config vitest.electron.config.js",
     "test:e2e": "playwright test",
     "check:release-dist": "node scripts/verify-release-dist.mjs",
     "test:verify-release-dist": "node scripts/test-verify-release-dist.mjs",
@@ -57,7 +58,7 @@
     "test:release-tag": "node --test scripts/verify-release-tag.test.mjs",
     "test:packaged-resources": "node --test scripts/verify-packaged-resources.test.mjs",
     "test:packaged-app": "node --test scripts/verify-packaged-app.test.mjs",
-    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
+    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:electron && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",

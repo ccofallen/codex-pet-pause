@@ -44,6 +44,9 @@ export function verifyDesktopWorkflow(workflow) {
   if (!hasRun(jobs.validate, 'npm run test:desktop-workflow')) {
     failures.push('validate job must run desktop workflow tests');
   }
+  if (!hasRun(jobs.validate, 'npm run test:electron')) {
+    failures.push('validate job must run Electron regression tests');
+  }
   if (!hasRun(jobs.validate, 'npm run test:release-artifacts')) {
     failures.push('validate job must run release artifact tests');
   }

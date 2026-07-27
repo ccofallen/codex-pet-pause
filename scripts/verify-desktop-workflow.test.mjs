@@ -35,6 +35,7 @@ const validWorkflow = {
         { run: 'npm run test:packaged-resources' },
         { run: 'npm run test:packaged-app' },
         { run: 'npm run check:desktop-release-config' },
+        { run: 'npm run test:electron' },
         { run: 'npm run test:run' },
         { run: 'npm run build' },
         { run: 'npm run test:e2e' },
@@ -126,6 +127,28 @@ test('workflow validates, packages every target, and publishes tag pushes', asyn
 
 test('accepts the in-memory validation, packaging, and release contract', () => {
   assert.deepEqual(verifyDesktopWorkflow(validWorkflow), []);
+});
+
+test('release scripts include the focused Electron regression gate', async () => {
+  const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.equal(
+    packageJson.scripts['test:electron'],
+    'vitest run --config vitest.electron.config.js',
+  );
+  assert.match(
+    packageJson.scripts['check:desktop-release'],
+    /(?:^|&&\s*)npm run test:electron(?:\s*&&|$)/,
+  );
+});
+
+test('rejects validation that skips Electron process regressions', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.validate.steps = invalid.jobs.validate.steps.filter(
+    (step) => step.run !== 'npm run test:electron',
+  );
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('Electron regression tests')),
+  );
 });
 
 test('rejects a workflow that does not publish v* tags', () => {
