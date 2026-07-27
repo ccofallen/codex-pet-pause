@@ -31,6 +31,9 @@ function hasExactlyArchitectures(architectures, expectedArchitectures) {
 export function verifyDesktopReleaseConfig(packageJson, fileExists = existsSync) {
   const failures = [];
   const build = packageJson.build ?? {};
+  if (build.afterPack !== 'scripts/after-pack.mjs') {
+    failures.push('build.afterPack must preserve the macOS ARM64 signing repair');
+  }
   if (
     packageJson.author?.name !== expected.authorName
     || packageJson.author?.email !== expected.authorEmail

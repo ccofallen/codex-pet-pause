@@ -25,6 +25,7 @@ jobs:
       - run: npm run test:brand-assets
       - run: npm run test:desktop-workflow
       - run: npm run test:electron
+      - run: npm run test:mac-signing
       - run: npm run test:release-artifacts
       - run: npm run test:release-tag
       - run: npm run test:packaged-resources

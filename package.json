@@ -1,7 +1,7 @@
 {
   "name": "codex-pet-pause",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
   "license": "MIT",
   "repository": {
@@ -28,6 +28,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:electron": "vitest run --config vitest.electron.config.js",
+    "test:mac-signing": "node --test scripts/after-pack.test.mjs",
     "test:e2e": "playwright test",
     "check:release-dist": "node scripts/verify-release-dist.mjs",
     "test:verify-release-dist": "node scripts/test-verify-release-dist.mjs",
@@ -62,7 +63,7 @@
     "test:release-tag": "node --test scripts/verify-release-tag.test.mjs",
     "test:packaged-resources": "node --test scripts/verify-packaged-resources.test.mjs",
     "test:packaged-app": "node --test scripts/verify-packaged-app.test.mjs",
-    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:electron && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
+    "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:electron && npm run test:mac-signing && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.34",
@@ -100,6 +101,7 @@
     "appId": "io.elevenlabs.codexpetpause",
     "productName": "Codex Pet Pause",
     "asar": true,
+    "afterPack": "scripts/after-pack.mjs",
     "files": [
       "dist/**/*",
       "electron/**/*",

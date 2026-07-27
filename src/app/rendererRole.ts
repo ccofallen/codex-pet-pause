@@ -13,10 +13,13 @@ export function deriveRendererRole(
 ): RendererRole {
   const query = new URLSearchParams(search);
   const desktop = query.get('mode') === 'desktop';
-  const settings = query.get('mode') === 'settings' || query.get('hidePet') === '1';
+  const settings = query.get('mode') === 'settings';
+  const hostedSettings = query.get('hidePet') === '1';
   const view = desktop ? 'desktop' : settings ? 'settings' : 'app';
   return {
     view,
-    lifecycle: desktopShellAvailable && view === 'settings' ? 'passive' : 'authoritative',
+    lifecycle: desktopShellAvailable && !desktop && (settings || hostedSettings)
+      ? 'passive'
+      : 'authoritative',
   };
 }
