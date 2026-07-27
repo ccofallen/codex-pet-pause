@@ -505,7 +505,7 @@ test('drags an open-bubble cat without moving aria-modal focus out of the dialog
   expect(focusedAction).toHaveFocus();
 });
 
-test('retains the final completion confirmation until its explicit close control is used', async () => {
+test('closes the final reminder immediately after completion empties the queue', async () => {
   const { user, publishDue } = renderInteractiveStage();
   act(() => publishDue('lookAway'));
   await user.click(screen.getByRole('button', { name: 'Momo 有一项提醒，打开' }));
@@ -513,11 +513,9 @@ test('retains the final completion confirmation until its explicit close control
 
   await user.click(screen.getByRole('button', { name: '完成了' }));
 
-  expect(screen.getByRole('status')).toHaveTextContent('目视远方已完成');
-  expect(screen.getByRole('button', { name: '关闭' })).toBeVisible();
-  expect(screen.getByRole('dialog', { name: '目视远方提醒' })).toBeVisible();
-  await user.click(screen.getByRole('button', { name: '关闭' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
 });
 
 test.each([

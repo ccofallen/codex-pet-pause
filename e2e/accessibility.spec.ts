@@ -100,9 +100,8 @@ test('completes a reminder and reaches all four views with keyboard only', async
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: '完成了' })).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(page.getByText('喝水已完成')).toBeFocused();
-  await page.keyboard.press('Tab');
-  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('cat-stage')).toBeFocused();
 
   for (const [buttonName, headingName] of [
     ['提醒', '提醒'], ['宠物', '宠物库'], ['设置', '设置'], ['陪伴', '团子 在陪你'],

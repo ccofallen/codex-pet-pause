@@ -60,6 +60,19 @@ test('provides a skip link, status area, and navigation between four focused vie
   expect(screen.getByRole('button', { name: '摸摸 Momo' })).toBe(cat);
 });
 
+test('desktop settings route keeps the full shell, opens settings, and hides the duplicate pet', () => {
+  window.history.replaceState({}, '', '/?mode=web&view=settings&hidePet=1');
+  const controller = createAppController(createFakeDependencies({ now: 0 }));
+
+  renderShell(controller);
+
+  expect(screen.getByRole('navigation', { name: '主要导航' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '设置' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('heading', { name: '设置' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: '摸摸 Momo' })).not.toBeInTheDocument();
+  window.history.replaceState({}, '', '/');
+});
+
 test('returns the viewport to the top when the shell opens and views change', async () => {
   const user = userEvent.setup();
   const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);

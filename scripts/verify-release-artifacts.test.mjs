@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -24,6 +25,15 @@ const platformSidecars = {
   ],
 };
 const invalidLinuxSidecar = 'Codex-Pet-Pause-0.2.0-linux-x64.AppImage.blockmap';
+const currentVersion = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
+const currentInstallerSet = completeInstallerSet.map(
+  (fileName) => fileName.replace('0.2.0', currentVersion),
+);
+const currentMacSidecars = platformSidecars.mac.map(
+  (fileName) => fileName.replace('0.2.0', currentVersion),
+);
 
 test('accepts one complete 0.2.0 installer set', () => {
   assert.deepEqual(verifyReleaseArtifacts(completeInstallerSet, '0.2.0'), []);
@@ -185,7 +195,7 @@ test('the executable --platform option validates only that platform', async () =
   const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
 
   try {
-    for (const fileName of completeInstallerSet.slice(0, 2)) {
+    for (const fileName of currentInstallerSet.slice(0, 2)) {
       await writeFile(join(directory, fileName), 'package');
     }
 
@@ -209,8 +219,8 @@ test('the executable --target option validates only one isolated matrix target',
   const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
 
   try {
-    await writeFile(join(directory, completeInstallerSet[0]), 'package');
-    await writeFile(join(directory, platformSidecars.mac[0]), 'sidecar');
+    await writeFile(join(directory, currentInstallerSet[0]), 'package');
+    await writeFile(join(directory, currentMacSidecars[0]), 'sidecar');
     await writeFile(join(directory, 'builder-effective-config.yaml'), 'metadata');
 
     const targetResult = spawnSync(
@@ -237,15 +247,15 @@ test('the executable rejects zero-byte and non-regular expected artifacts', asyn
   const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
 
   try {
-    await writeFile(join(directory, completeInstallerSet[0]), '');
-    await mkdir(join(directory, completeInstallerSet[1]));
+    await writeFile(join(directory, currentInstallerSet[0]), '');
+    await mkdir(join(directory, currentInstallerSet[1]));
 
     const result = spawnSync(process.execPath, [script, directory, '--platform', 'mac'], {
       encoding: 'utf8',
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-arm64\.dmg/);
-    assert.match(result.stderr, /Codex-Pet-Pause-0\.2\.0-mac-x64\.dmg/);
+    assert.ok(result.stderr.includes(currentInstallerSet[0]));
+    assert.ok(result.stderr.includes(currentInstallerSet[1]));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -256,7 +266,7 @@ test('the executable rejects an unexpected zero-byte stale package', async () =>
   const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
 
   try {
-    for (const fileName of completeInstallerSet.slice(0, 2)) {
+    for (const fileName of currentInstallerSet.slice(0, 2)) {
       await writeFile(join(directory, fileName), 'package');
     }
     await writeFile(join(directory, 'Codex-Pet-Pause-0.1.0-mac-x64.dmg'), '');

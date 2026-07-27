@@ -299,7 +299,7 @@ test('starts a selected ambient animation after 12–25 seconds for one visible 
   expect(sprite).toHaveAttribute('data-row', '0');
 });
 
-test('opens a due bubble only on activation and maps work, completion, snooze, and skip rows', async () => {
+test('opens a due bubble only on activation and closes after work, snooze, and skip', async () => {
   const { controller } = renderStage();
   act(() => controller.publishDue('lookAway'));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -309,12 +309,9 @@ test('opens a due bubble only on activation and maps work, completion, snooze, a
   fireEvent.click(screen.getByRole('button', { name: '现在做' }));
   expect(screen.getByTestId('pet-sprite')).toHaveAttribute('data-row', '7');
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '完成了' })));
-  expect(screen.getByTestId('pet-sprite')).toHaveAttribute('data-row', '4');
-  expect(screen.getByRole('status')).toHaveTextContent('目视远方已完成');
-  expect(screen.getByRole('dialog')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  act(() => vi.advanceTimersByTime(900));
   expect(screen.getByTestId('pet-sprite')).toHaveAttribute('data-row', '0');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
   act(() => controller.publishDue('lookAway'));
   fireEvent.click(screen.getByRole('button', { name: 'Murk 有一项提醒，打开' }));

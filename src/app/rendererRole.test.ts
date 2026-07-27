@@ -2,20 +2,26 @@ import { describe, expect, test } from 'vitest';
 import { deriveRendererRole } from './rendererRole';
 
 describe('deriveRendererRole', () => {
-  test.each([
-    ['?mode=settings', false],
-    ['?hidePet=1', false],
-    ['?mode=web&view=settings&hidePet=1', false],
-  ])('keeps ordinary web settings route %s authoritative', (search, desktopShellAvailable) => {
-    expect(deriveRendererRole(search, desktopShellAvailable)).toEqual({
+  test('keeps an explicit standalone settings renderer authoritative on the web', () => {
+    expect(deriveRendererRole('?mode=settings', false)).toEqual({
       view: 'settings',
       lifecycle: 'authoritative',
     });
   });
 
-  test('makes only Electron settings renderers passive', () => {
+  test.each([
+    '?hidePet=1',
+    '?mode=web&view=settings&hidePet=1',
+  ])('keeps the full app shell for ordinary web route %s', (search) => {
+    expect(deriveRendererRole(search, false)).toEqual({
+      view: 'app',
+      lifecycle: 'authoritative',
+    });
+  });
+
+  test('keeps the full app shell but makes the Electron settings window passive', () => {
     expect(deriveRendererRole('?mode=web&view=settings&hidePet=1', true)).toEqual({
-      view: 'settings',
+      view: 'app',
       lifecycle: 'passive',
     });
   });

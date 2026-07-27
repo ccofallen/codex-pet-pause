@@ -14,6 +14,7 @@ const validPackage = {
   build: {
     appId: 'io.elevenlabs.codexpetpause',
     productName: 'Codex Pet Pause',
+    afterPack: 'scripts/after-pack.mjs',
     mac: {
       icon: 'build/icons/icon.icns',
       target: [{ target: 'dmg' }],
@@ -50,6 +51,16 @@ test('accepts the approved desktop release contract', () => {
   assert.equal(
     validPackage.build.linux.artifactName,
     'Codex-Pet-Pause-${version}-linux-x64.${ext}',
+  );
+});
+
+test('requires the ARM64 signing repair hook', () => {
+  const missingHook = structuredClone(validPackage);
+  delete missingHook.build.afterPack;
+
+  assert.ok(
+    verifyDesktopReleaseConfig(missingHook, () => true)
+      .some((failure) => failure.includes('afterPack')),
   );
 });
 

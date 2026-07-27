@@ -554,31 +554,24 @@ test('moves focus into the action card and keeps completion single-flight', asyn
   expect(controller.complete).toHaveBeenCalledTimes(1);
   expect(complete).toBeDisabled();
   await act(async () => finishComplete());
-  expect(await screen.findByRole('status')).toHaveFocus();
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '现在做' })).toHaveFocus();
 });
 
-test('retains the focused completion confirmation after the queue advances', async () => {
+test('advances directly to the next queued reminder after completion', async () => {
   const user = userEvent.setup();
   const controller = statefulQueueController();
   renderBubble({ controller });
-  expect(screen.getByText('第 1 / 2 项')).toBeVisible();
   await user.click(screen.getByRole('button', { name: '现在做' }));
 
   await user.click(screen.getByRole('button', { name: '完成了' }));
 
-  const confirmation = await screen.findByRole('status');
-  expect(confirmation).toHaveTextContent('目视远方已完成');
-  expect(confirmation).toHaveFocus();
-  expect(screen.getByText('第 1 / 2 项')).toBeVisible();
-  expect(controller.getSnapshot().scheduler.dueQueue[0]?.reminderId).toBe('drinkWater');
-
-  await user.click(screen.getByRole('button', { name: '继续下一项' }));
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('dialog')).toHaveAccessibleName('喝水提醒');
-  expect(screen.getByText('第 2 / 2 项')).toBeVisible();
   expect(screen.getByRole('button', { name: '现在做' })).toHaveFocus();
 });
 
-test('closes an empty completion confirmation only through its explicit control', async () => {
+test('closes immediately after completing the final queued reminder', async () => {
   const user = userEvent.setup();
   const onRequestClose = vi.fn();
   const controller = statefulQueueController([reminder('lookAway', 20)]);
@@ -586,10 +579,7 @@ test('closes an empty completion confirmation only through its explicit control'
   await user.click(screen.getByRole('button', { name: '现在做' }));
   await user.click(screen.getByRole('button', { name: '完成了' }));
 
-  expect(await screen.findByRole('status')).toHaveFocus();
-  expect(onRequestClose).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: '关闭' }));
-
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(onRequestClose).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('button', { name: '猫咪' })).toHaveFocus();
 });

@@ -15,7 +15,10 @@ type AppView = 'companion' | 'reminders' | 'pet' | 'settings';
 
 export function AppShell() {
   const { t } = useI18n();
-  const [activeView, setActiveView] = useState<AppView>('companion');
+  const launchQuery = new URLSearchParams(window.location.search);
+  const hidePetFromHost = launchQuery.get('hidePet') === '1';
+  const initialView: AppView = launchQuery.get('view') === 'settings' ? 'settings' : 'companion';
+  const [activeView, setActiveView] = useState<AppView>(initialView);
   const snapshot = useAppSnapshot();
   const pwaSnapshot = useSyncExternalStore(pwaStatus.subscribe, pwaStatus.getSnapshot, pwaStatus.getSnapshot);
   const enabledReminderCount = snapshot.settings.reminders.filter((reminder) => reminder.enabled).length;
@@ -60,9 +63,11 @@ export function AppShell() {
         offlineReady={pwaSnapshot.offlineReady}
       />
       <PwaUpdatePrompt />
-      {activeImportedPet === undefined
-        ? <InteractiveCatStage key={`builtin:${snapshot.settings.activePetId}`} />
-        : <CodexPetStage key={`imported:${activeImportedPet.id}`} pet={activeImportedPet} />}
+      {!hidePetFromHost && (
+        activeImportedPet === undefined
+          ? <InteractiveCatStage key={`builtin:${snapshot.settings.activePetId}`} />
+          : <CodexPetStage key={`imported:${activeImportedPet.id}`} pet={activeImportedPet} />
+      )}
       <nav className="primary-navigation" aria-label={t('nav.primary')}>
         {navigationItems.map(({ key, label }) => (
           <button
