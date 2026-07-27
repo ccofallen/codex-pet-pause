@@ -15,6 +15,7 @@ function renderStatus(
   storageMode: 'persistent' | 'temporary',
   offlineReady: boolean,
   locale: 'zh-CN' | 'en' = 'zh-CN',
+  desktopShellAvailable = false,
 ) {
   return render(
     <I18nProvider locale={locale}>
@@ -22,6 +23,7 @@ function renderStatus(
         notificationStatus={notificationStatus}
         storageMode={storageMode}
         offlineReady={offlineReady}
+        desktopShellAvailable={desktopShellAvailable}
       />
     </I18nProvider>,
   );
@@ -70,4 +72,21 @@ test('shows capability guidance in English', () => {
   expect(screen.getByText('System notifications are off, so background reminders may be less reliable.')).toBeVisible();
   expect(screen.getByText('This is a temporary session. Settings may be lost after refreshing.')).toBeVisible();
   expect(screen.getByText('Offline startup is not ready yet.')).toBeVisible();
+});
+
+test('shows native background guidance without browser lifecycle warnings', () => {
+  renderStatus('granted', 'persistent', false, 'zh-CN', true);
+
+  expect(screen.getByText('桌面应用正在后台运行，关闭设置窗口后提醒仍会继续。')).toBeVisible();
+  expect(screen.queryByText('离线启动尚未准备好')).not.toBeInTheDocument();
+  expect(screen.queryByText('页面当前在前台运行')).not.toBeInTheDocument();
+  expect(screen.queryByText('关闭网页或浏览器后，提醒不会继续运行。')).not.toBeInTheDocument();
+});
+
+test('localizes native background guidance in English', () => {
+  renderStatus('granted', 'persistent', false, 'en', true);
+
+  expect(screen.getByText(
+    'The desktop app keeps running in the background. Reminders continue after you close the settings window.',
+  )).toBeVisible();
 });

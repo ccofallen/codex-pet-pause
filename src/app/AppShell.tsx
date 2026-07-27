@@ -61,6 +61,7 @@ export function AppShell() {
         notificationStatus={snapshot.notificationStatus}
         storageMode={snapshot.storageMode}
         offlineReady={pwaSnapshot.offlineReady}
+        desktopShellAvailable={window.petShell !== undefined}
       />
       <PwaUpdatePrompt />
       {!hidePetFromHost && (

@@ -73,6 +73,23 @@ test('desktop settings route keeps the full shell, opens settings, and hides the
   window.history.replaceState({}, '', '/');
 });
 
+test('hosted settings show desktop background guidance instead of browser-close warning', () => {
+  const originalPetShell = window.petShell;
+  Object.defineProperty(window, 'petShell', { configurable: true, value: {} });
+  window.history.replaceState({}, '', '/?mode=web&view=settings&hidePet=1');
+  const controller = createAppController(createFakeDependencies({ now: 0 }));
+
+  try {
+    renderShell(controller);
+
+    expect(screen.getByText('桌面应用正在后台运行，关闭设置窗口后提醒仍会继续。')).toBeVisible();
+    expect(screen.queryByText('关闭网页或浏览器后，提醒不会继续运行。')).not.toBeInTheDocument();
+  } finally {
+    Object.defineProperty(window, 'petShell', { configurable: true, value: originalPetShell });
+    window.history.replaceState({}, '', '/');
+  }
+});
+
 test('returns the viewport to the top when the shell opens and views change', async () => {
   const user = userEvent.setup();
   const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
