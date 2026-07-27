@@ -3,14 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
 const expectedPackages = [
-  ['mac-arm64', 'mac', 'macos-latest', 'npm run desktop:pack:mac -- --arm64', 'release/*-mac-arm64.dmg'],
-  ['mac-x64', 'mac', 'macos-latest', 'npm run desktop:pack:mac -- --x64', 'release/*-mac-x64.dmg'],
-  ['windows-x64', 'windows', 'windows-latest', 'npm run desktop:pack:win -- --x64', 'release/*-windows-x64.exe'],
-  ['linux-x64', 'linux', 'ubuntu-latest', 'npm run desktop:pack:linux -- --x64', 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n'],
+  ['mac-arm64', 'mac-arm64', 'macos-latest', 'npm run desktop:pack:mac -- --arm64', 'release/*-mac-arm64.dmg'],
+  ['mac-x64', 'mac-x64', 'macos-latest', 'npm run desktop:pack:mac -- --x64', 'release/*-mac-x64.dmg'],
+  ['windows-x64', 'windows-x64', 'windows-latest', 'npm run desktop:pack:win -- --x64', 'release/*-windows-x64.exe'],
+  ['linux-x64', 'linux-x64', 'ubuntu-latest', 'npm run desktop:pack:linux -- --x64', 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n'],
 ];
 const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml';
 const tagPushCondition = "github.event_name=='push'&&startsWith(github.ref,'refs/tags/v')";
-const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}';
+const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}';
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
@@ -80,14 +80,14 @@ export function verifyDesktopWorkflow(workflow) {
   if (!Array.isArray(packages) || packages.length !== expectedPackages.length) {
     failures.push('package matrix must contain exactly four native targets');
   }
-  for (const [id, platform, os, command, artifact] of expectedPackages) {
+  for (const [id, target, os, command, artifact] of expectedPackages) {
     const entry = packages?.find((candidate) => candidate.id === id);
     if (!entry) {
       failures.push(`package matrix is missing ${id}`);
       continue;
     }
-    if (entry.platform !== platform) {
-      failures.push(`${id} validator platform must be ${platform}`);
+    if (entry.target !== target) {
+      failures.push(`${id} validator target must be ${target}`);
     }
     if (entry.os !== os) failures.push(`${id} must run on ${os}`);
     if (entry.command !== command) failures.push(`${id} command must be ${command}`);
@@ -117,7 +117,7 @@ export function verifyDesktopWorkflow(workflow) {
   );
   const artifactUploadIndex = packageSteps.indexOf(artifactUpload);
   if (packageValidationIndexes.length !== 1) {
-    failures.push('package job must validate matrix artifacts exactly once');
+    failures.push('package job must validate the exact matrix target exactly once');
   } else if (
     packageValidationIndexes[0] <= matrixCommandIndex
     || packageValidationIndexes[0] >= artifactUploadIndex

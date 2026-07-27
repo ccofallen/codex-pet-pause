@@ -44,6 +44,49 @@ test('filters the expected installer set to one requested platform', () => {
   assert.equal(verifyReleaseArtifacts([], '0.2.0', 'linux').length, 2);
 });
 
+test('validates exactly one native matrix target and its exact sidecars', () => {
+  assert.deepEqual(verifyReleaseArtifacts([
+    completeInstallerSet[0],
+    platformSidecars.mac[0],
+    'builder-effective-config.yaml',
+    'latest-mac.yml',
+  ], '0.2.0', 'mac-arm64'), []);
+  assert.deepEqual(verifyReleaseArtifacts([
+    completeInstallerSet[1],
+    platformSidecars.mac[1],
+  ], '0.2.0', 'mac-x64'), []);
+  assert.deepEqual(verifyReleaseArtifacts([
+    completeInstallerSet[2],
+    ...platformSidecars.windows,
+    'latest.yml',
+  ], '0.2.0', 'windows-x64'), []);
+  assert.deepEqual(verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(3),
+    'latest-linux.yml',
+  ], '0.2.0', 'linux-x64'), []);
+});
+
+test('target scope rejects sibling installers and sidecars from another matrix job', () => {
+  const failures = verifyReleaseArtifacts([
+    completeInstallerSet[0],
+    completeInstallerSet[1],
+    ...platformSidecars.mac,
+  ], '0.2.0', 'mac-arm64');
+  assert.deepEqual(failures, [
+    `Unexpected release artifact: ${completeInstallerSet[1]}`,
+    `Unexpected release artifact: ${platformSidecars.mac[1]}`,
+  ]);
+});
+
+test('Linux target scope rejects the non-generated AppImage sidecar', () => {
+  assert.deepEqual(verifyReleaseArtifacts([
+    ...completeInstallerSet.slice(3),
+    invalidLinuxSidecar,
+  ], '0.2.0', 'linux-x64'), [
+    `Unexpected release artifact: ${invalidLinuxSidecar}`,
+  ]);
+});
+
 test('requires exact public artifact filenames', () => {
   const failures = verifyReleaseArtifacts([
     'prefix-Codex-Pet-Pause-0.2.0-mac-arm64.dmg',
@@ -156,6 +199,34 @@ test('the executable --platform option validates only that platform', async () =
     assert.match(allResult.stderr, /windows-x64/);
     assert.match(allResult.stderr, /linux-x64\.AppImage/);
     assert.match(allResult.stderr, /linux-x64\.deb/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the executable --target option validates only one isolated matrix target', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-pet-release-target-'));
+  const script = fileURLToPath(new URL('./verify-release-artifacts.mjs', import.meta.url));
+
+  try {
+    await writeFile(join(directory, completeInstallerSet[0]), 'package');
+    await writeFile(join(directory, platformSidecars.mac[0]), 'sidecar');
+    await writeFile(join(directory, 'builder-effective-config.yaml'), 'metadata');
+
+    const targetResult = spawnSync(
+      process.execPath,
+      [script, directory, '--target', 'mac-arm64'],
+      { encoding: 'utf8' },
+    );
+    assert.equal(targetResult.status, 0, targetResult.stderr);
+
+    const platformResult = spawnSync(
+      process.execPath,
+      [script, directory, '--platform', 'mac'],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(platformResult.status, 0);
+    assert.match(platformResult.stderr, /mac-x64\.dmg/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

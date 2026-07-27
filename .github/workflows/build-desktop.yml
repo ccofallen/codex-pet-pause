@@ -42,22 +42,22 @@ jobs:
       matrix:
         include:
           - id: mac-arm64
-            platform: mac
+            target: mac-arm64
             os: macos-latest
             command: npm run desktop:pack:mac -- --arm64
             artifact: release/*-mac-arm64.dmg
           - id: mac-x64
-            platform: mac
+            target: mac-x64
             os: macos-latest
             command: npm run desktop:pack:mac -- --x64
             artifact: release/*-mac-x64.dmg
           - id: windows-x64
-            platform: windows
+            target: windows-x64
             os: windows-latest
             command: npm run desktop:pack:win -- --x64
             artifact: release/*-windows-x64.exe
           - id: linux-x64
-            platform: linux
+            target: linux-x64
             os: ubuntu-latest
             command: npm run desktop:pack:linux -- --x64
             artifact: |
@@ -74,7 +74,7 @@ jobs:
       - run: node scripts/verify-release-tag.mjs "${{ github.ref_name }}"
       - run: ${{ matrix.command }}
       - run: npm run desktop:smoke:packaged-app
-      - run: node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}
+      - run: node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.id }}

@@ -49,28 +49,28 @@ const validWorkflow = {
           include: [
             {
               id: 'mac-arm64',
-              platform: 'mac',
+              target: 'mac-arm64',
               os: 'macos-latest',
               command: 'npm run desktop:pack:mac -- --arm64',
               artifact: 'release/*-mac-arm64.dmg',
             },
             {
               id: 'mac-x64',
-              platform: 'mac',
+              target: 'mac-x64',
               os: 'macos-latest',
               command: 'npm run desktop:pack:mac -- --x64',
               artifact: 'release/*-mac-x64.dmg',
             },
             {
               id: 'windows-x64',
-              platform: 'windows',
+              target: 'windows-x64',
               os: 'windows-latest',
               command: 'npm run desktop:pack:win -- --x64',
               artifact: 'release/*-windows-x64.exe',
             },
             {
               id: 'linux-x64',
-              platform: 'linux',
+              target: 'linux-x64',
               os: 'ubuntu-latest',
               command: 'npm run desktop:pack:linux -- --x64',
               artifact: 'release/*-linux-x64.AppImage\nrelease/*-linux-x64.deb\n',
@@ -86,7 +86,7 @@ const validWorkflow = {
         { run: tagVersionRun },
         { run: '${{ matrix.command }}' },
         { run: packagedAppSmokeRun },
-        { run: 'node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}' },
+        { run: 'node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}' },
         {
           uses: 'actions/upload-artifact@v4',
           with: {
@@ -200,11 +200,21 @@ test('rejects packaging without npm ci or a protected matrix artifact upload', (
   assert.ok(failures.some((failure) => failure.includes('if-no-files-found')));
 });
 
-test('rejects native package entries without the validator platform', () => {
+test('rejects native package entries without the exact validator target', () => {
   const invalid = structuredClone(validWorkflow);
-  invalid.jobs.package.strategy.matrix.include[0].platform = 'windows';
+  invalid.jobs.package.strategy.matrix.include[0].target = 'windows-x64';
   assert.ok(
-    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('mac-arm64 validator platform')),
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('mac-arm64 validator target')),
+  );
+});
+
+test('rejects platform-wide validation in isolated matrix jobs', () => {
+  const invalid = structuredClone(validWorkflow);
+  invalid.jobs.package.steps.find(
+    (step) => step.run?.includes('verify-release-artifacts'),
+  ).run = 'node scripts/verify-release-artifacts.mjs release --platform ${{ matrix.platform }}';
+  assert.ok(
+    verifyDesktopWorkflow(invalid).some((failure) => failure.includes('exact matrix target')),
   );
 });
 

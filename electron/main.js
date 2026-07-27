@@ -48,6 +48,7 @@ let dockState = {
 let moveDebounce;
 let handlePoll;
 let isRestoring = false;
+let hasRegisteredIpcHandlers = false;
 
 function readPersistedState() {
   try {
@@ -331,6 +332,53 @@ function bindMoveEvents(win) {
   });
 }
 
+function getCurrentPetWindow(sender) {
+  if (petWindow === undefined || petWindow.isDestroyed()) {
+    return undefined;
+  }
+  if (sender !== undefined && petWindow.webContents.id !== sender.id) {
+    return undefined;
+  }
+  return petWindow;
+}
+
+function registerIpcHandlers() {
+  if (hasRegisteredIpcHandlers) {
+    return;
+  }
+  hasRegisteredIpcHandlers = true;
+
+  ipcMain.handle('pet:open-settings', () => {
+    openSettingsWindow();
+  });
+
+  ipcMain.handle('pet:manual-dock', () => {
+    if (!EDGE_DOCKING_ENABLED) return;
+    const currentPetWindow = getCurrentPetWindow();
+    if (currentPetWindow === undefined) return;
+    dockToNearestEdge(currentPetWindow, 'left');
+  });
+
+  ipcMain.on('pet:drag-window', (event, payload) => {
+    const currentPetWindow = getCurrentPetWindow(event.sender);
+    if (currentPetWindow === undefined) return;
+    if (!payload || typeof payload !== 'object') return;
+    moveWindowTo(currentPetWindow, payload.x, payload.y);
+  });
+
+  ipcMain.on('pet:show-context-menu', (event, payload) => {
+    const currentPetWindow = getCurrentPetWindow(event.sender);
+    if (currentPetWindow === undefined) return;
+    const safeX = payload?.x;
+    const safeY = payload?.y;
+    if (!Number.isFinite(safeX) || !Number.isFinite(safeY)) {
+      showPetContextMenu(currentPetWindow);
+      return;
+    }
+    showPetContextMenu(currentPetWindow, safeX, safeY);
+  });
+}
+
 function createWindow() {
   const workspace = getPrimaryWorkArea();
   const persisted = readPersistedState();
@@ -395,36 +443,6 @@ function createWindow() {
   });
 
   petWindow.loadURL(resolveWindowUrl('desktop'));
-
-  ipcMain.handle('pet:open-settings', () => {
-    openSettingsWindow();
-  });
-
-  ipcMain.handle('pet:manual-dock', () => {
-    if (!EDGE_DOCKING_ENABLED) return;
-    dockToNearestEdge(petWindow, 'left');
-  });
-
-  ipcMain.on('pet:drag-window', (event, payload) => {
-    const safeEvent = event.sender;
-    if (safeEvent === undefined) return;
-    if (!petWindow || petWindow.webContents.id !== safeEvent.id) return;
-    if (!payload || typeof payload !== 'object') return;
-    moveWindowTo(petWindow, payload.x, payload.y);
-  });
-
-  ipcMain.on('pet:show-context-menu', (event, payload) => {
-    const safeEvent = event.sender;
-    if (safeEvent === undefined) return;
-    if (!petWindow || petWindow.webContents.id !== safeEvent.id) return;
-    const safeX = payload?.x;
-    const safeY = payload?.y;
-    if (!Number.isFinite(safeX) || !Number.isFinite(safeY)) {
-      showPetContextMenu(petWindow);
-      return;
-    }
-    showPetContextMenu(petWindow, safeX, safeY);
-  });
 }
 
 function createTray() {
@@ -487,6 +505,7 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('io.elevenlabs.codexpetpause');
   }
+  registerIpcHandlers();
   createWindow();
   createTray();
 
@@ -511,6 +530,6 @@ app.on('before-quit', () => {
   }
 });
 
-app.on('window-all-closed', (event) => {
-  event.preventDefault();
+app.on('window-all-closed', () => {
+  // Keep the tray app resident on every desktop platform; Quit remains explicit.
 });
