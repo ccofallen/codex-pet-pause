@@ -100,8 +100,17 @@ const electron = vi.hoisted(() => {
 vi.mock('electron', () => electron);
 
 beforeAll(async () => {
-  await import('./main.js');
-  await Promise.resolve();
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', {
+    ...originalPlatform,
+    value: process.env.PET_PAUSE_MAIN_TEST_PLATFORM ?? 'linux',
+  });
+  try {
+    await import('./main.js');
+    await Promise.resolve();
+  } finally {
+    Object.defineProperty(process, 'platform', originalPlatform);
+  }
 });
 
 describe('Electron process lifecycle', () => {
@@ -121,12 +130,12 @@ describe('Electron process lifecycle', () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
-  it('registers process IPC once and targets recreated windows safely', () => {
+  it('applies the Linux workspace policy while drag and context-menu IPC remain active', () => {
     const activate = electron.appListeners.get('activate');
     const firstPetWindow = electron.windows[0];
 
     expect(firstPetWindow.options.alwaysOnTop).toBe(true);
-    expect(firstPetWindow.options.focusable).toBe(process.platform !== 'linux');
+    expect(firstPetWindow.options.focusable).toBe(false);
     expect(firstPetWindow.setVisibleOnAllWorkspaces)
       .toHaveBeenCalledWith(true, { visibleOnFullScreen: true });
 
@@ -162,6 +171,20 @@ describe('Electron process lifecycle', () => {
 
     expect(currentPetWindow.setPosition).toHaveBeenCalledWith(50, 61, false);
     expect(firstPetWindow.setPosition).not.toHaveBeenCalled();
+
+    const showContextMenu = electron.ipcMain.on.mock.calls
+      .find(([channel]) => channel === 'pet:show-context-menu')[1];
+    showContextMenu(
+      { sender: currentPetWindow.webContents },
+      { x: 200, y: 210 },
+    );
+
+    const contextMenu = electron.Menu.buildFromTemplate.mock.results.at(-1).value;
+    expect(contextMenu.popup).toHaveBeenCalledWith({
+      window: currentPetWindow,
+      x: 20,
+      y: 30,
+    });
 
     const openSettings = electron.ipcMain.handle.mock.calls
       .find(([channel]) => channel === 'pet:open-settings')[1];

@@ -83,6 +83,25 @@ test('shows native background guidance without browser lifecycle warnings', () =
   expect(screen.queryByText('关闭网页或浏览器后，提醒不会继续运行。')).not.toBeInTheDocument();
 });
 
+test.each([
+  ['denied', '系统通知已关闭，后台提醒可靠性会降低'],
+  ['unavailable', '当前浏览器仅支持网页内提醒'],
+] as const)('retains desktop %s notification and temporary-storage warnings while suppressing PWA failures', (
+  notificationStatus,
+  notificationWarning,
+) => {
+  pwaStatus.markRegistrationError();
+  renderStatus(notificationStatus, 'temporary', false, 'zh-CN', true);
+
+  expect(screen.getByText(notificationWarning)).toBeVisible();
+  expect(screen.getByText('当前是临时会话，刷新后设置可能丢失')).toBeVisible();
+  expect(screen.getByText('桌面应用正在后台运行，关闭设置窗口后提醒仍会继续。')).toBeVisible();
+  expect(screen.queryByText('离线能力不可用')).not.toBeInTheDocument();
+  expect(screen.queryByText('离线启动尚未准备好')).not.toBeInTheDocument();
+  expect(screen.queryByText('页面当前在前台运行')).not.toBeInTheDocument();
+  expect(screen.queryByText('关闭网页或浏览器后，提醒不会继续运行。')).not.toBeInTheDocument();
+});
+
 test('localizes native background guidance in English', () => {
   renderStatus('granted', 'persistent', false, 'en', true);
 
