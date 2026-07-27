@@ -6,7 +6,11 @@ describe('pet window platform policy', () => {
     expect(resolvePetWindowPolicy('linux')).toEqual({ focusable: false });
   });
 
-  it.each(['darwin', 'win32'])('keeps the %s pet focusable', (platform) => {
-    expect(resolvePetWindowPolicy(platform)).toEqual({ focusable: true });
+  it('makes the Windows pet non-focusable so changing focus cannot expose a title bar', () => {
+    expect(resolvePetWindowPolicy('win32')).toEqual({ focusable: false });
+  });
+
+  it('keeps the macOS pet focusable', () => {
+    expect(resolvePetWindowPolicy('darwin')).toEqual({ focusable: true });
   });
 });

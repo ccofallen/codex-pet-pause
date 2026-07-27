@@ -1,5 +1,5 @@
 export function resolvePetWindowPolicy(platform) {
   return {
-    focusable: platform !== 'linux',
+    focusable: platform === 'darwin',
   };
 }
