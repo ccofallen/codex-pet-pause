@@ -25,3 +25,14 @@ export function isSupportedPetArchive(filename, mimeType = '', rawUrl = '') {
     || normalizedMime === 'application/zip'
     || normalizedMime === 'application/x-zip-compressed';
 }
+
+export function revealSettingsAfterPetdexDownload(settingsWindow, petdexWindow) {
+  if (petdexWindow !== undefined && !petdexWindow.isDestroyed()) {
+    petdexWindow.hide();
+    petdexWindow.close();
+  }
+  if (settingsWindow === undefined || settingsWindow.isDestroyed()) return;
+  if (settingsWindow.isMinimized()) settingsWindow.restore();
+  settingsWindow.show();
+  settingsWindow.focus();
+}

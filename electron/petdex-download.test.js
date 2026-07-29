@@ -3,6 +3,7 @@ import {
   isAllowedPetdexNavigation,
   isSupportedPetArchive,
   MAX_PETDEX_ARCHIVE_BYTES,
+  revealSettingsAfterPetdexDownload,
 } from './petdex-download.js';
 
 describe('Petdex download policy', () => {
@@ -19,5 +20,31 @@ describe('Petdex download policy', () => {
     expect(isSupportedPetArchive('download', 'application/zip')).toBe(true);
     expect(isSupportedPetArchive('pet.json', 'application/json')).toBe(false);
     expect(MAX_PETDEX_ARCHIVE_BYTES).toBe(32 * 1024 * 1024);
+  });
+
+  it('closes Petdex and reveals the settings window after a download handoff', () => {
+    const calls = [];
+    const petdexWindow = {
+      isDestroyed: () => false,
+      hide: () => calls.push('hide-petdex'),
+      close: () => calls.push('close-petdex'),
+    };
+    const settingsWindow = {
+      isDestroyed: () => false,
+      isMinimized: () => true,
+      restore: () => calls.push('restore-settings'),
+      show: () => calls.push('show-settings'),
+      focus: () => calls.push('focus-settings'),
+    };
+
+    revealSettingsAfterPetdexDownload(settingsWindow, petdexWindow);
+
+    expect(calls).toEqual([
+      'hide-petdex',
+      'close-petdex',
+      'restore-settings',
+      'show-settings',
+      'focus-settings',
+    ]);
   });
 });
