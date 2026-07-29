@@ -7,6 +7,8 @@ declare global {
         | { type: 'archive'; name: string; bytes: ArrayBuffer }
         | { type: 'error' }
       ) => void) => () => void;
+      notifyStateChanged?: () => void;
+      onStateChanged?: (callback: () => void) => () => void;
       dockNow?: () => void;
       dragWindowTo?: (x: number, y: number) => void;
       showContextMenu?: (x?: number, y?: number) => void;
