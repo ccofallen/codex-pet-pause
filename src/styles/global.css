@@ -786,6 +786,17 @@ input:focus-visible {
   min-width: 0;
 }
 
+.pet-import-actions {
+  display: grid;
+  gap: 0.65rem;
+  width: min(18rem, 100%);
+}
+
+.pet-import-actions > button {
+  width: 100%;
+  min-height: 2.75rem;
+}
+
 .pet-import-description {
   display: flex;
   flex-wrap: wrap;

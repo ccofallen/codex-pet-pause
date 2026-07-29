@@ -348,11 +348,13 @@ export function PetLibrary({
           aria-label={t('pet.import.chooseFiles')}
           onChange={chooseFiles}
         />
-        <button ref={importTriggerRef} type="button" onClick={() => inputRef.current?.click()}>
-          {t('pet.import.action')}
-        </button>
-        <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
-        <p className="pet-import-description">{t('pet.import.petdexHint')}</p>
+        <div className="pet-import-actions">
+          <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
+          <button ref={importTriggerRef} type="button" onClick={() => inputRef.current?.click()}>
+            {t('pet.import.action')}
+          </button>
+          <p className="pet-import-description">{t('pet.import.petdexHint')}</p>
+        </div>
         <div
           className="pet-drop-zone"
           role="button"

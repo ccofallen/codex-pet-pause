@@ -138,9 +138,14 @@ test('opens Petdex in the desktop shell and previews an intercepted ZIP', async 
   };
   const { extractArchive } = await renderLibrary();
 
-  await userEvent.setup().click(screen.getByRole('button', {
-    name: '浏览 Petdex 并自动导入',
-  }));
+  const petdexButton = screen.getByRole('button', { name: '浏览 Petdex 并自动导入' });
+  const manualImportButton = screen.getByRole('button', { name: '导入 Codex 宠物' });
+  expect(petdexButton.parentElement).toBe(manualImportButton.parentElement);
+  expect(petdexButton.parentElement).toHaveClass('pet-import-actions');
+  expect(petdexButton.compareDocumentPosition(manualImportButton)
+    & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  await userEvent.setup().click(petdexButton);
   expect(openPetdex).toHaveBeenCalledOnce();
 
   await act(async () => receiveImport({
