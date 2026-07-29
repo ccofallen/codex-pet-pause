@@ -24,10 +24,9 @@ import { CatSprite } from '../sprite/CatSprite';
 import type { CatAnimation } from '../sprite/atlas';
 import { useReducedMotion } from '../sprite/useReducedMotion';
 import {
-  CAT_COMPACT_SIZE,
-  CAT_DESKTOP_SIZE,
   clampCatPosition,
   defaultCatPosition,
+  petSizeForViewport,
   type Point,
   type Size,
 } from '../stage/viewport';
@@ -84,10 +83,6 @@ function boundedRandom(random: () => number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function catSizeForViewport(width: number): Size {
-  return width < 480 ? CAT_COMPACT_SIZE : CAT_DESKTOP_SIZE;
-}
-
 function viewportSize(): Size {
   return { width: window.innerWidth, height: window.innerHeight };
 }
@@ -118,10 +113,16 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
   const { t } = useI18n();
   const reducedMotion = useReducedMotion();
   const motionAllowed = snapshot.settings.animationsEnabled && !reducedMotion;
-  const [catSize, setCatSize] = useState(() => catSizeForViewport(window.innerWidth));
+  const desktopApp = window.petShell !== undefined;
+  const [catSize, setCatSize] = useState(() => (
+    petSizeForViewport(window.innerWidth, snapshot.settings.petSize, desktopApp)
+  ));
   const catSizeRef = useRef(catSize);
   const [position, setPosition] = useState(() => (
-    defaultCatPosition(viewportSize(), catSizeForViewport(window.innerWidth))
+    defaultCatPosition(
+      viewportSize(),
+      petSizeForViewport(window.innerWidth, snapshot.settings.petSize, desktopApp),
+    )
   ));
   const positionRef = useRef(position);
   const [behavior, setBehavior] = useState(initialCatBehavior);
@@ -191,14 +192,19 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
 
   useEffect(() => {
     const onResize = () => {
-      const nextSize = catSizeForViewport(window.innerWidth);
+      const nextSize = petSizeForViewport(
+        window.innerWidth,
+        snapshot.settings.petSize,
+        desktopApp,
+      );
       catSizeRef.current = nextSize;
       setCatSize(nextSize);
       updatePosition(positionRef.current);
     };
+    onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [updatePosition]);
+  }, [desktopApp, snapshot.settings.petSize, updatePosition]);
 
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
@@ -579,6 +585,9 @@ export function InteractiveCatStage({ runtime = browserRuntime }: InteractiveCat
           : t('pet.touch', { name: snapshot.settings.cat.name })}
         style={{
           position: 'fixed',
+          width: `${catSize.width}px`,
+          minWidth: `${catSize.width}px`,
+          height: `${catSize.height}px`,
           transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
           transition,
           touchAction: 'none',

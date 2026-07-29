@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useAppController, useAppSnapshot } from '../../app/AppProvider';
 import { isCurrentQuietRuntime } from '../../app/appController';
 import type {
-  AppSettings, AppSnapshot, NotificationStatus, QuietHours, ThemeMode,
+  AppSettings, AppSnapshot, NotificationStatus, PetSizePreference, QuietHours, ThemeMode,
 } from '../../app/model';
 import { isPresetReminder } from '../reminders/domain/types';
 import type {
@@ -149,6 +149,7 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
   const [quietStart, setQuietStart] = useState(() => minutesToTime(snapshot.settings.quietHours.startMinutes));
   const [quietEnd, setQuietEnd] = useState(() => minutesToTime(snapshot.settings.quietHours.endMinutes));
   const [theme, setTheme] = useState<ThemeMode>(snapshot.settings.theme);
+  const [petSize, setPetSize] = useState<PetSizePreference>(snapshot.settings.petSize);
   const [soundEnabled, setSoundEnabled] = useState(snapshot.settings.soundEnabled);
   const [animationsEnabled, setAnimationsEnabled] = useState(snapshot.settings.animationsEnabled);
   const [error, setError] = useState<SettingsError>();
@@ -233,6 +234,7 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
     setQuietStart(minutesToTime(settings.quietHours.startMinutes));
     setQuietEnd(minutesToTime(settings.quietHours.endMinutes));
     setTheme(settings.theme);
+    setPetSize(settings.petSize);
     setSoundEnabled(settings.soundEnabled);
     setAnimationsEnabled(settings.animationsEnabled);
   };
@@ -336,7 +338,13 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
     event.preventDefault();
     if (!beginAction()) return;
     try {
-      await controller.saveSettings({ ...controller.getSnapshot().settings, theme, soundEnabled, animationsEnabled });
+      await controller.saveSettings({
+        ...controller.getSnapshot().settings,
+        theme,
+        petSize,
+        soundEnabled,
+        animationsEnabled,
+      });
       syncDraft(controller.getSnapshot().settings);
       const result = controller.getSnapshot();
       if (result.storageMode === 'temporary' || result.nonBlockingError === 'settings-write-failed') {
@@ -458,6 +466,7 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
               ))}
             </fieldset>
             <fieldset className="settings-card"><legend>{t('settings.theme.heading')}</legend>{([['light', 'settings.theme.light'], ['dark', 'settings.theme.dark'], ['system', 'settings.theme.system']] as const).map(([value, label]) => <label key={value}><input type="radio" name="theme" checked={theme === value} onChange={() => setTheme(value)} />{t(label)}</label>)}</fieldset>
+            <fieldset className="settings-card"><legend>{t('settings.petSize.heading')}</legend>{([['small', 'settings.petSize.small'], ['medium', 'settings.petSize.medium'], ['large', 'settings.petSize.large']] as const).map(([value, label]) => <label key={value}><input type="radio" name="pet-size" checked={petSize === value} onChange={() => setPetSize(value)} />{t(label)}</label>)}</fieldset>
             <fieldset className="settings-card"><legend>{t('settings.experience.heading')}</legend><label><input type="checkbox" checked={soundEnabled} onChange={(event) => setSoundEnabled(event.target.checked)} />{t('settings.experience.sound')}</label><label><input type="checkbox" checked={animationsEnabled} onChange={(event) => setAnimationsEnabled(event.target.checked)} />{t('settings.experience.animations')}</label></fieldset>
             <section className="settings-card" aria-labelledby="notification-heading"><h2 id="notification-heading">{t('settings.notifications.heading')}</h2><p aria-live="polite">{t(notificationCopy[snapshot.notificationStatus])}</p>{snapshot.notificationStatus === 'default' && <button type="button" disabled={pending} onClick={() => void requestNotifications()}>{t('settings.notifications.enable')}</button>}</section>
             {error !== undefined && <p role="alert" className="settings-error">{errorText(error)}</p>}

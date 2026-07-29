@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -6,11 +7,18 @@ import {
   BrowserWindow,
   Menu,
   screen,
+  shell,
   Tray,
   nativeImage,
   ipcMain,
 } from 'electron';
 import { resolvePetWindowPolicy } from './window-policy.js';
+import {
+  isAllowedPetdexNavigation,
+  isSupportedPetArchive,
+  MAX_PETDEX_ARCHIVE_BYTES,
+  PETDEX_URL,
+} from './petdex-download.js';
 
 const IS_DEV = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
 const EDGE_HANDLE_SIZE = 24;
@@ -39,6 +47,7 @@ const stateFilePath = path.join(app.getPath('userData'), STATE_FILE);
 
 let petWindow;
 let settingsWindow;
+let petdexWindow;
 let tray;
 let dockState = {
   isDocked: false,
@@ -353,6 +362,13 @@ function registerIpcHandlers() {
     openSettingsWindow();
   });
 
+  ipcMain.handle('pet:open-petdex', (event) => {
+    if (settingsWindow === undefined
+      || settingsWindow.isDestroyed()
+      || event.sender.id !== settingsWindow.webContents.id) return;
+    openPetdexWindow();
+  });
+
   ipcMain.handle('pet:manual-dock', () => {
     if (!EDGE_DOCKING_ENABLED) return;
     const currentPetWindow = getCurrentPetWindow();
@@ -377,6 +393,88 @@ function registerIpcHandlers() {
       return;
     }
     showPetContextMenu(currentPetWindow, safeX, safeY);
+  });
+}
+
+function sendPetdexImport(payload) {
+  if (settingsWindow === undefined || settingsWindow.isDestroyed()) return;
+  settingsWindow.webContents.send('pet:petdex-import', payload);
+}
+
+function handlePetdexDownload(_event, item) {
+  const filename = path.basename(item.getFilename());
+  if (!isSupportedPetArchive(filename, item.getMimeType(), item.getURL())) return;
+  const totalBytes = item.getTotalBytes();
+  if (totalBytes > MAX_PETDEX_ARCHIVE_BYTES) {
+    item.cancel();
+    sendPetdexImport({ type: 'error' });
+    return;
+  }
+
+  const temporaryPath = path.join(app.getPath('temp'), `codex-pet-pause-${randomUUID()}.zip`);
+  item.setSavePath(temporaryPath);
+  item.once('done', (_doneEvent, state) => {
+    if (state !== 'completed') {
+      void fs.promises.rm(temporaryPath, { force: true });
+      sendPetdexImport({ type: 'error' });
+      return;
+    }
+    void (async () => {
+      try {
+        const stat = await fs.promises.stat(temporaryPath);
+        if (stat.size > MAX_PETDEX_ARCHIVE_BYTES) {
+          sendPetdexImport({ type: 'error' });
+          return;
+        }
+        const bytes = await fs.promises.readFile(temporaryPath);
+        const transferable = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength,
+        );
+        sendPetdexImport({ type: 'archive', name: filename || 'petdex-pet.zip', bytes: transferable });
+      } catch {
+        sendPetdexImport({ type: 'error' });
+      } finally {
+        await fs.promises.rm(temporaryPath, { force: true });
+      }
+    })();
+  });
+}
+
+function openPetdexWindow() {
+  if (petdexWindow !== undefined && !petdexWindow.isDestroyed()) {
+    if (petdexWindow.isMinimized()) petdexWindow.restore();
+    petdexWindow.focus();
+    return;
+  }
+
+  petdexWindow = new BrowserWindow({
+    width: 1100,
+    height: 760,
+    title: 'Petdex',
+    parent: settingsWindow,
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:petdex',
+    },
+  });
+  const petdexSession = petdexWindow.webContents.session;
+  petdexSession.on('will-download', handlePetdexDownload);
+  petdexWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedPetdexNavigation(url)) {
+      void petdexWindow?.loadURL(url);
+    } else if (url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+  petdexWindow.loadURL(PETDEX_URL);
+  petdexWindow.on('closed', () => {
+    petdexSession.removeListener('will-download', handlePetdexDownload);
+    petdexWindow = undefined;
   });
 }
 
@@ -499,6 +597,7 @@ function openSettingsWindow() {
 
   settingsWindow.loadURL(resolveWindowUrl('web&view=settings&hidePet=1'));
   settingsWindow.on('closed', () => {
+    if (petdexWindow !== undefined && !petdexWindow.isDestroyed()) petdexWindow.close();
     settingsWindow = undefined;
   });
 }

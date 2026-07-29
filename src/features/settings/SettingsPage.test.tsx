@@ -507,6 +507,8 @@ describe('general settings', () => {
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeVisible();
     expect(screen.getByRole('group', { name: 'Appearance' })).toBeVisible();
     expect(screen.getByRole('radio', { name: 'Use system setting' })).toBeChecked();
+    expect(screen.getByRole('group', { name: 'Pet size' })).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Medium' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Reminder sound' })).toBeVisible();
     expect(screen.getByText('System notifications are not enabled yet. Allow them to receive reminders while this page is in the background.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Save application settings' })).toBeVisible();
@@ -529,14 +531,20 @@ describe('general settings', () => {
     expect(readFileSync('index.html', 'utf8')).toContain('<title>Codex Pet Pause · Cat sound: elevenlabs.io</title>');
   });
 
-  test('saves theme, sound, and animations', async () => {
+  test('saves theme, pet size, sound, and animations', async () => {
     const { user, controller } = await setup('general');
     const save = vi.spyOn(controller, 'saveSettings');
     await user.click(screen.getByRole('radio', { name: '夜间' }));
+    await user.click(screen.getByRole('radio', { name: '大' }));
     await user.click(screen.getByRole('checkbox', { name: '提醒声音' }));
     await user.click(screen.getByRole('checkbox', { name: '界面动画' }));
     await user.click(screen.getByRole('button', { name: '保存应用设置' }));
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ theme: 'dark', soundEnabled: true, animationsEnabled: false }));
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      theme: 'dark',
+      petSize: 'large',
+      soundEnabled: true,
+      animationsEnabled: false,
+    }));
   });
 
   test('reports a session-only save honestly, then clears that warning after persistence recovers', async () => {

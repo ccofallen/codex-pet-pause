@@ -77,7 +77,10 @@ async function renderLibrary(options: {
   };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete window.petShell;
+});
 
 test('previews and saves a valid pair only after confirmation', async () => {
   const user = userEvent.setup();
@@ -118,6 +121,36 @@ test('extracts one ZIP and opens the existing preview', async () => {
   expect(parseImport).toHaveBeenCalledWith(manifestFile, atlasFile, 123);
   expect(await screen.findByRole('dialog', { name: '导入宠物预览' }))
     .toHaveTextContent('Murk');
+});
+
+test('opens Petdex in the desktop shell and previews an intercepted ZIP', async () => {
+  let receiveImport!: (event:
+    | { type: 'archive'; name: string; bytes: ArrayBuffer }
+    | { type: 'error' }
+  ) => void;
+  const openPetdex = vi.fn(async () => undefined);
+  window.petShell = {
+    openPetdex,
+    onPetdexImport: (callback) => {
+      receiveImport = callback;
+      return () => undefined;
+    },
+  };
+  const { extractArchive } = await renderLibrary();
+
+  await userEvent.setup().click(screen.getByRole('button', {
+    name: '浏览 Petdex 并自动导入',
+  }));
+  expect(openPetdex).toHaveBeenCalledOnce();
+
+  await act(async () => receiveImport({
+    type: 'archive',
+    name: 'murk.zip',
+    bytes: new TextEncoder().encode('zip').buffer,
+  }));
+
+  expect(extractArchive).toHaveBeenCalledWith(expect.objectContaining({ name: 'murk.zip' }));
+  expect(await screen.findByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Murk');
 });
 
 test('accepts one ZIP by drag and drop', async () => {

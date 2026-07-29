@@ -1,5 +1,7 @@
 import { createDefaultSettings } from '../app/defaults';
-import type { AppSettings, RuntimeState, ThemeMode } from '../app/model';
+import type {
+  AppSettings, PetSizePreference, RuntimeState, ThemeMode,
+} from '../app/model';
 import type { CatConfig } from '../features/cat/domain/types';
 import { DEFAULT_PET_POSITION } from '../features/pets/domain/types';
 import type { PetPosition } from '../features/pets/domain/types';
@@ -19,6 +21,7 @@ export const SETTINGS_KEY = 'neko-pause:settings';
 type RecordValue = Record<string, unknown>;
 
 const themes: readonly ThemeMode[] = ['light', 'dark', 'system'];
+const petSizes: readonly PetSizePreference[] = ['small', 'medium', 'large'];
 const presetTypes: readonly PresetReminderType[] = ['lookAway', 'drinkWater', 'standUp', 'takeBreak'];
 const reservedIds = new Set<string>(presetTypes);
 const MAX_CUSTOM_REMINDERS = 20;
@@ -173,7 +176,7 @@ function presetReminderByType(reminders: readonly Reminder[]): Map<PresetReminde
 
 function repairSettings(value: RecordValue, now: number, defaultLocale: Locale): AppSettings {
   const fallback = createDefaultSettings(now, defaultLocale);
-  const repairedLocale = value.schemaVersion === 4
+  const repairedLocale = value.schemaVersion === 4 || value.schemaVersion === 5
     ? enumValue(value.locale, locales, defaultLocale)
     : 'zh-CN';
   const quietHours = isRecord(value.quietHours) ? value.quietHours : {};
@@ -201,10 +204,11 @@ function repairSettings(value: RecordValue, now: number, defaultLocale: Locale):
     if (repaired !== undefined) repairedCustoms.push(repaired);
   }
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     locale: repairedLocale,
     onboardingComplete: booleanValue(value.onboardingComplete, fallback.onboardingComplete),
     theme: enumValue(value.theme, themes, fallback.theme),
+    petSize: enumValue(value.petSize, petSizes, fallback.petSize),
     soundEnabled: booleanValue(value.soundEnabled, fallback.soundEnabled),
     animationsEnabled: booleanValue(value.animationsEnabled, fallback.animationsEnabled),
     affinity: Math.min(100, Math.max(0, finiteValue(value.affinity, fallback.affinity))),

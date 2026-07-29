@@ -31,7 +31,7 @@ describe('browser settings repository', () => {
     const loaded = await createBrowserSettingsRepository(storage).load();
 
     expect(loaded).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       theme: 'dark',
       affinity: 23,
       cat: { name: '团子' },
@@ -77,7 +77,7 @@ describe('browser settings repository', () => {
     storage.setItem(SETTINGS_KEY, JSON.stringify(old));
 
     const loaded = await createBrowserSettingsRepository(storage).load();
-    expect(loaded?.schemaVersion).toBe(4);
+    expect(loaded?.schemaVersion).toBe(5);
     expect(loaded?.reminders.find(({ id }) => id === 'lookAway')).toMatchObject({ kind: 'preset', nextDueAt: 123, status: 'due' });
     expect(loaded?.reminders.find(({ id }) => id === 'drinkWater')).toMatchObject({ kind: 'preset', nextDueAt: 456, snoozedUntil: 789 });
   });
@@ -182,7 +182,7 @@ describe('browser settings repository', () => {
     storage.setItem(SETTINGS_KEY, JSON.stringify(schema3));
 
     await expect(createBrowserSettingsRepository(storage).load()).resolves.toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       locale: 'zh-CN',
       runtime: schema3.runtime,
       reminders: schema3.reminders,
@@ -194,7 +194,7 @@ describe('browser settings repository', () => {
     storage.setItem(SETTINGS_KEY, JSON.stringify({ ...createDefaultSettings(NOW), locale: 'not-a-locale' }));
 
     await expect(createBrowserSettingsRepository(storage, 'en').load())
-      .resolves.toMatchObject({ schemaVersion: 4, locale: 'en' });
+      .resolves.toMatchObject({ schemaVersion: 5, locale: 'en', petSize: 'medium' });
   });
 
   test('repairs each invalid field while retaining valid sibling fields', async () => {
@@ -204,7 +204,7 @@ describe('browser settings repository', () => {
     const repo = createBrowserSettingsRepository(storage);
     storage.setItem(SETTINGS_KEY, JSON.stringify({
       ...defaults,
-      schemaVersion: 4,
+      schemaVersion: 5,
       onboardingComplete: 'yes',
       theme: 'neon',
       soundEnabled: 1,

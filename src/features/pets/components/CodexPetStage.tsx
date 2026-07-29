@@ -12,9 +12,8 @@ import { CatReminderBubble } from '../../cat/components/CatReminderBubble';
 import { lookDirectionForVector } from '../../cat/domain/behavior';
 import { useReducedMotion } from '../../cat/sprite/useReducedMotion';
 import {
-  CAT_COMPACT_SIZE,
-  CAT_DESKTOP_SIZE,
   clampCatPosition,
+  petSizeForViewport,
   type Point,
   type Size,
 } from '../../cat/stage/viewport';
@@ -51,10 +50,6 @@ interface PointerSession {
 const DRAG_THRESHOLD = 6;
 const ATTENTION_DEPARTURE_PX = 48;
 
-function petSizeForViewport(width: number): Size {
-  return width < 480 ? CAT_COMPACT_SIZE : CAT_DESKTOP_SIZE;
-}
-
 function viewportSize(): Size {
   return { width: window.innerWidth, height: window.innerHeight };
 }
@@ -73,10 +68,16 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
   const { t } = useI18n();
   const reducedMotion = useReducedMotion();
   const motionAllowed = snapshot.settings.animationsEnabled && !reducedMotion;
-  const [petSize, setPetSize] = useState(() => petSizeForViewport(window.innerWidth));
+  const desktopApp = window.petShell !== undefined;
+  const [petSize, setPetSize] = useState(() => (
+    petSizeForViewport(window.innerWidth, snapshot.settings.petSize, desktopApp)
+  ));
   const petSizeRef = useRef(petSize);
   const [position, setPosition] = useState(() => (
-    positionFromRatios(snapshot.settings.petPosition, petSizeForViewport(window.innerWidth))
+    positionFromRatios(
+      snapshot.settings.petPosition,
+      petSizeForViewport(window.innerWidth, snapshot.settings.petSize, desktopApp),
+    )
   ));
   const positionRef = useRef(position);
   const [behavior, setBehavior] = useState<CodexBehaviorState>(initialCodexBehavior);
@@ -125,14 +126,19 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
 
   useEffect(() => {
     const onResize = () => {
-      const nextSize = petSizeForViewport(window.innerWidth);
+      const nextSize = petSizeForViewport(
+        window.innerWidth,
+        snapshot.settings.petSize,
+        desktopApp,
+      );
       petSizeRef.current = nextSize;
       setPetSize(nextSize);
       updatePosition(positionRef.current);
     };
+    onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [updatePosition]);
+  }, [desktopApp, snapshot.settings.petSize, updatePosition]);
 
   useEffect(() => {
     dispatchBehavior({ type: 'REMINDER_CHANGED', due });
@@ -380,6 +386,9 @@ export function CodexPetStage({ pet, random = Math.random }: CodexPetStageProps)
           : t('pet.touch', { name: pet.displayName })}
         style={{
           position: 'fixed',
+          width: `${petSize.width}px`,
+          minWidth: `${petSize.width}px`,
+          height: `${petSize.height}px`,
           transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
           transition: 'none',
           touchAction: 'none',

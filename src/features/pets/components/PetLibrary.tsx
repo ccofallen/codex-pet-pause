@@ -1,5 +1,6 @@
 import {
-  useEffect, useId, useLayoutEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode,
+  useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
+  type ChangeEvent, type DragEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppController, useAppSnapshot } from '../../../app/AppProvider';
@@ -34,7 +35,7 @@ const currentTime = (): number => Date.now();
 type LibraryError =
   | { kind: 'selection-unsupported' | 'selection-incomplete' | 'selection-duplicate' }
   | { kind: 'import'; code: PetImportErrorCode; details: Readonly<Record<string, string | number>> }
-  | { kind: 'import-generic' | 'save' | 'select' | 'delete' };
+  | { kind: 'import-generic' | 'petdex-download' | 'save' | 'select' | 'delete' };
 
 type LibraryMessage =
   | { kind: 'saved' | 'deleted'; name: string }
@@ -92,6 +93,7 @@ function libraryErrorMessage(error: LibraryError, t: Translator): string {
     case 'selection-duplicate': return t('pet.import.error.duplicateSelection');
     case 'import': return importErrorMessage(error.code, error.details, t);
     case 'import-generic': return t('pet.import.error.generic');
+    case 'petdex-download': return t('pet.import.error.petdexDownload');
     case 'save': return t('pet.library.saveFailed');
     case 'select': return t('pet.library.selectFailed');
     case 'delete': return t('pet.library.deleteFailed');
@@ -167,7 +169,7 @@ export function PetLibrary({
     queueMicrotask(() => deleteTriggerRef.current?.focus());
   };
 
-  const processFiles = async (files: File[]): Promise<void> => {
+  const processFiles = useCallback(async (files: File[]): Promise<void> => {
     const request = importRequestRef.current + 1;
     importRequestRef.current = request;
     setError(undefined);
@@ -219,6 +221,25 @@ export function PetLibrary({
         ? { kind: 'import', code: reason.code, details: reason.details }
         : { kind: 'import-generic' });
     }
+  }, [extractArchive, now, parseImport]);
+
+  useEffect(() => window.petShell?.onPetdexImport?.((event) => {
+    if (event.type === 'error') {
+      setError({ kind: 'petdex-download' });
+      return;
+    }
+    const archive = new File([event.bytes], event.name, { type: 'application/zip' });
+    void processFiles([archive]);
+  }), [processFiles]);
+
+  const openPetdex = (): void => {
+    setError(undefined);
+    setMessage(undefined);
+    if (window.petShell?.openPetdex !== undefined) {
+      void window.petShell.openPetdex();
+      return;
+    }
+    window.open('https://petdex.dev/', '_blank', 'noopener,noreferrer');
   };
 
   const chooseFiles = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -330,6 +351,8 @@ export function PetLibrary({
         <button ref={importTriggerRef} type="button" onClick={() => inputRef.current?.click()}>
           {t('pet.import.action')}
         </button>
+        <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
+        <p className="pet-import-description">{t('pet.import.petdexHint')}</p>
         <div
           className="pet-drop-zone"
           role="button"

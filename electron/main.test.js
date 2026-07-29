@@ -24,7 +24,17 @@ const electron = vi.hoisted(() => {
       minimized: false,
       webContents: {
         id: nextWebContentsId++,
+        send: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+        session: {
+          on: vi.fn(),
+          removeListener: vi.fn(),
+        },
       },
+      close: vi.fn(() => {
+        window.destroyed = true;
+        listeners.get('closed')?.();
+      }),
       focus: vi.fn(),
       getBounds: vi.fn(() => ({
         x: options.x ?? 0,
@@ -82,6 +92,9 @@ const electron = vi.hoisted(() => {
     nativeImage: {
       createEmpty: vi.fn(() => icon),
       createFromPath: vi.fn(() => icon),
+    },
+    shell: {
+      openExternal: vi.fn(),
     },
     screen: {
       getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })),
@@ -147,7 +160,7 @@ describe('Electron process lifecycle', () => {
     activate();
     const currentPetWindow = electron.windows.at(-1);
 
-    for (const channel of ['pet:open-settings', 'pet:manual-dock']) {
+    for (const channel of ['pet:open-settings', 'pet:open-petdex', 'pet:manual-dock']) {
       const registrations = electron.ipcMain.handle.mock.calls
         .filter(([registeredChannel]) => registeredChannel === channel);
       expect(registrations).toHaveLength(1);
@@ -191,6 +204,21 @@ describe('Electron process lifecycle', () => {
     openSettings();
     const firstSettingsWindow = electron.windows.at(-1);
     expect(firstSettingsWindow.options.focusable).toBeUndefined();
+    const openPetdex = electron.ipcMain.handle.mock.calls
+      .find(([channel]) => channel === 'pet:open-petdex')[1];
+    openPetdex({ sender: firstSettingsWindow.webContents });
+    const firstPetdexWindow = electron.windows.at(-1);
+    expect(firstPetdexWindow.options).toMatchObject({
+      title: 'Petdex',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        partition: 'persist:petdex',
+      },
+    });
+    expect(firstPetdexWindow.webContents.session.on)
+      .toHaveBeenCalledWith('will-download', expect.any(Function));
     firstSettingsWindow.listeners.get('closed')();
     openSettings();
 
