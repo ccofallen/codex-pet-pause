@@ -18,6 +18,7 @@ import {
   isSupportedPetArchive,
   MAX_PETDEX_ARCHIVE_BYTES,
   PETDEX_URL,
+  revealSettingsAfterPetdexDownload,
 } from './petdex-download.js';
 
 const IS_DEV = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
@@ -399,6 +400,7 @@ function registerIpcHandlers() {
 function sendPetdexImport(payload) {
   if (settingsWindow === undefined || settingsWindow.isDestroyed()) return;
   settingsWindow.webContents.send('pet:petdex-import', payload);
+  revealSettingsAfterPetdexDownload(settingsWindow, petdexWindow);
 }
 
 function handlePetdexDownload(_event, item) {
