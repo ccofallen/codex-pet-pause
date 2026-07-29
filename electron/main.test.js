@@ -227,3 +227,26 @@ describe('Electron process lifecycle', () => {
     expect(settingsWindows).toHaveLength(2);
   });
 });
+
+describe('renderer state synchronization', () => {
+  it('forwards state changes from settings to the current pet window only', async () => {
+    const openSettings = electron.ipcMain.handle.mock.calls
+      .find(([channel]) => channel === 'pet:open-settings')[1];
+    await openSettings();
+    const settings = electron.windows
+      .filter(({ options }) => options.title === 'Codex Pet Pause 设置')
+      .at(-1);
+    const currentPet = electron.windows
+      .filter(({ options, destroyed }) => options.transparent === true && !destroyed)
+      .at(-1);
+    const forwardState = electron.ipcMain.on.mock.calls
+      .find(([channel]) => channel === 'pet:state-changed')[1];
+
+    forwardState({ sender: settings.webContents });
+    expect(currentPet.webContents.send).toHaveBeenCalledWith('pet:state-changed');
+
+    currentPet.webContents.send.mockClear();
+    forwardState({ sender: currentPet.webContents });
+    expect(currentPet.webContents.send).not.toHaveBeenCalled();
+  });
+});

@@ -370,6 +370,15 @@ function registerIpcHandlers() {
     openPetdexWindow();
   });
 
+  ipcMain.on('pet:state-changed', (event) => {
+    if (settingsWindow === undefined
+      || settingsWindow.isDestroyed()
+      || event.sender.id !== settingsWindow.webContents.id) return;
+    const currentPetWindow = getCurrentPetWindow();
+    if (currentPetWindow === undefined) return;
+    currentPetWindow.webContents.send('pet:state-changed');
+  });
+
   ipcMain.handle('pet:manual-dock', () => {
     if (!EDGE_DOCKING_ENABLED) return;
     const currentPetWindow = getCurrentPetWindow();

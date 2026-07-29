@@ -31,6 +31,7 @@ export function createRendererSynchronization(): RendererSynchronization {
   let closed = false;
   let lastToken: string | undefined;
   let channel: BroadcastChannel | undefined;
+  let unsubscribeNative = (): void => undefined;
 
   try {
     if (typeof globalThis.BroadcastChannel === 'function') {
@@ -57,6 +58,12 @@ export function createRendererSynchronization(): RendererSynchronization {
       if (isSyncMessage(event.data)) receive(event.data.token);
     };
   }
+  try {
+    unsubscribeNative = window.petShell?.onStateChanged?.(() => receive())
+      ?? (() => undefined);
+  } catch {
+    unsubscribeNative = () => undefined;
+  }
 
   return {
     notify(): void {
@@ -73,6 +80,11 @@ export function createRendererSynchronization(): RendererSynchronization {
       } catch {
         // Storage events remain available when BroadcastChannel delivery fails.
       }
+      try {
+        window.petShell?.notifyStateChanged?.();
+      } catch {
+        // Browser synchronization remains available when native IPC delivery fails.
+      }
     },
 
     subscribe(listener): () => void {
@@ -86,6 +98,7 @@ export function createRendererSynchronization(): RendererSynchronization {
       closed = true;
       listeners.clear();
       window.removeEventListener('storage', onStorage);
+      unsubscribeNative();
       if (channel !== undefined) {
         channel.onmessage = null;
         channel.close();
