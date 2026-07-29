@@ -8,6 +8,8 @@ export interface Size {
   height: number;
 }
 
+export type PetSizePreference = 'small' | 'medium' | 'large';
+
 export interface Rect extends Point, Size {}
 
 export type BubbleSide = 'top' | 'right' | 'bottom' | 'left';
@@ -20,6 +22,25 @@ export interface BubblePlacement {
 
 export const CAT_DESKTOP_SIZE: Size = { width: 140, height: 152 };
 export const CAT_COMPACT_SIZE: Size = { width: 112, height: 121 };
+
+const PET_SIZE_SCALE: Record<PetSizePreference, number> = {
+  small: 0.8,
+  medium: 1,
+  large: 1.25,
+};
+
+export function petSizeForViewport(
+  viewportWidth: number,
+  preference: PetSizePreference,
+  desktopApp = false,
+): Size {
+  const base = !desktopApp && viewportWidth < 480 ? CAT_COMPACT_SIZE : CAT_DESKTOP_SIZE;
+  const scale = PET_SIZE_SCALE[preference];
+  return {
+    width: Math.round(base.width * scale),
+    height: Math.round(base.height * scale),
+  };
+}
 
 const DEFAULT_RIGHT_MARGIN = 24;
 const DEFAULT_TOP = 96;

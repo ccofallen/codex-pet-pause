@@ -4,6 +4,7 @@ import type { PresetReminderType, Reminder, SchedulerState } from '../features/r
 import type { Locale } from '../i18n/types';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
+export type PetSizePreference = 'small' | 'medium' | 'large';
 
 export interface QuietHours {
   enabled: boolean;
@@ -18,10 +19,11 @@ export interface RuntimeState {
 }
 
 export interface AppSettings {
-  schemaVersion: 4;
+  schemaVersion: 5;
   locale: Locale;
   onboardingComplete: boolean;
   theme: ThemeMode;
+  petSize: PetSizePreference;
   soundEnabled: boolean;
   animationsEnabled: boolean;
   affinity: number;

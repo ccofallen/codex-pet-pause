@@ -15,10 +15,11 @@ export function createDefaultSettings(now: number, locale: Locale = 'zh-CN'): Ap
   });
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     locale,
     onboardingComplete: false,
     theme: 'system',
+    petSize: 'medium',
     soundEnabled: false,
     animationsEnabled: true,
     affinity: 0,

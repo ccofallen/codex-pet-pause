@@ -45,7 +45,8 @@ export async function seedApp(
     );
     const enabled = new Map(presetReminders.map((item) => [item.type, item]));
     localStorage.setItem('neko-pause:settings', JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
+      petSize: 'medium',
       locale: seededOptions.locale ?? 'zh-CN',
       onboardingComplete: true,
       theme: seededOptions.theme ?? 'light',

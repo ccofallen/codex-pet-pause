@@ -4,12 +4,20 @@ import {
   CAT_DESKTOP_SIZE,
   clampCatPosition,
   defaultCatPosition,
+  petSizeForViewport,
   placeBubble,
 } from './viewport';
 
 test('exports the fixed desktop and compact cat sizes', () => {
   expect(CAT_DESKTOP_SIZE).toEqual({ width: 140, height: 152 });
   expect(CAT_COMPACT_SIZE).toEqual({ width: 112, height: 121 });
+});
+
+test('scales desktop pets to small, medium, and large while preserving the current default', () => {
+  expect(petSizeForViewport(360, 'small', true)).toEqual({ width: 112, height: 122 });
+  expect(petSizeForViewport(360, 'medium', true)).toEqual({ width: 140, height: 152 });
+  expect(petSizeForViewport(360, 'large', true)).toEqual({ width: 175, height: 190 });
+  expect(petSizeForViewport(390, 'medium')).toEqual(CAT_COMPACT_SIZE);
 });
 
 test('uses the fixed top-right default and clamps small viewports', () => {
