@@ -1,0 +1,140 @@
+name: Publish Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-android.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+
+  desktop:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-desktop.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+
+  validate:
+    needs: [android, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify release tag
+        run: node scripts/verify-release-tag.mjs "$GITHUB_REF_NAME"
+      - name: Download validated desktop artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: codex-pet-pause-desktop-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release/desktop
+      - name: Download validated Android artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: codex-pet-pause-android-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release/android
+      - name: Validate complete release artifact sets
+        env:
+          DESKTOP_RELEASE_DIR: ${{ runner.temp }}/release/desktop
+          ANDROID_RELEASE_DIR: ${{ runner.temp }}/release/android
+        run: |
+          node scripts/verify-release-artifacts.mjs "$DESKTOP_RELEASE_DIR"
+          node scripts/verify-android-release.mjs "$ANDROID_RELEASE_DIR"
+      - name: Stage validated complete release
+        env:
+          DESKTOP_RELEASE_DIR: ${{ runner.temp }}/release/desktop
+          ANDROID_RELEASE_DIR: ${{ runner.temp }}/release/android
+          COMPLETE_RELEASE_DIR: ${{ runner.temp }}/release/complete
+        run: |
+          mkdir -p "$COMPLETE_RELEASE_DIR"
+          cp "$DESKTOP_RELEASE_DIR"/* "$COMPLETE_RELEASE_DIR"/
+          cp "$ANDROID_RELEASE_DIR"/* "$COMPLETE_RELEASE_DIR"/
+      - name: Upload validated complete release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codex-pet-pause-release-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release/complete/
+          if-no-files-found: error
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated complete release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: codex-pet-pause-release-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release
+      - name: Publish validated draft atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ runner.temp }}/release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [ "$release_state" = "false" ]; then
+            echo "::error::Release $GITHUB_REF_NAME is already public; refusing to replace public assets" >&2
+            exit 1
+          fi
+          if [ -z "$release_state" ]; then
+            gh release create "$GITHUB_REF_NAME" --draft --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"
+            release_state="true"
+          fi
+          if [ "$release_state" != "true" ]; then
+            echo "::error::Release $GITHUB_REF_NAME is not a writable draft" >&2
+            exit 1
+          fi
+
+          release_state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft')"
+          if [ "$release_state" != "true" ]; then
+            echo "::error::Release $GITHUB_REF_NAME became public before upload; refusing to replace assets" >&2
+            exit 1
+          fi
+
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          remote_assets="$RUNNER_TEMP/remote-release-assets.txt"
+          release_json="$RUNNER_TEMP/release.json"
+          find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort > "$expected_assets"
+
+          gh release upload "$GITHUB_REF_NAME" "$RELEASE_DIR"/* --clobber
+          gh release view "$GITHUB_REF_NAME" --json isDraft,assets > "$release_json"
+          if [ "$(jq -r '.isDraft' "$release_json")" != "true" ]; then
+            echo "::error::Release $GITHUB_REF_NAME became public during upload" >&2
+            exit 1
+          fi
+          jq -r '.assets[].name' "$release_json" | LC_ALL=C sort > "$remote_assets"
+          if ! cmp -s "$expected_assets" "$remote_assets"; then
+            echo "::error::Remote release assets do not exactly match the validated complete set" >&2
+            diff -u "$expected_assets" "$remote_assets" || true
+            exit 1
+          fi
+
+          gh release edit "$GITHUB_REF_NAME" --draft=false

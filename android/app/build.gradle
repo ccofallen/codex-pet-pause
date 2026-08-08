@@ -1,0 +1,117 @@
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+def releaseVersion = new JsonSlurper().parse(rootProject.file('../package.json')).version as String
+def releaseVersionMatch = releaseVersion =~ /^(\d+)\.(\d+)\.(\d+)$/
+if (!releaseVersionMatch.matches()) {
+    throw new GradleException("Android release version must be major.minor.patch: ${releaseVersion}")
+}
+def releaseMajor = releaseVersionMatch[0][1].toInteger()
+def releaseMinor = releaseVersionMatch[0][2].toInteger()
+def releasePatch = releaseVersionMatch[0][3].toInteger()
+if (releaseMinor > 99 || releasePatch > 99) {
+    throw new GradleException("Android release minor and patch versions must be at most 99: ${releaseVersion}")
+}
+def androidVersionCode = (releaseMajor * 1000000) + (releaseMinor * 10000) + (releasePatch * 100)
+
+def localSigningPropertiesPath = System.getenv('ANDROID_SIGNING_PROPERTIES') ?:
+    rootProject.file('../.signing/signing.properties').absolutePath
+def localSigningPropertiesFile = file(localSigningPropertiesPath)
+def localSigningProperties = new Properties()
+if (localSigningPropertiesFile.exists()) {
+    localSigningPropertiesFile.withInputStream { localSigningProperties.load(it) }
+}
+def signingValue = { environmentName, propertyName ->
+    System.getenv(environmentName) ?: localSigningProperties.getProperty(propertyName)
+}
+def releaseSigning = [
+    storeFile: signingValue('ANDROID_KEYSTORE_PATH', 'storeFile'),
+    storePassword: signingValue('ANDROID_STORE_PASSWORD', 'storePassword'),
+    keyAlias: signingValue('ANDROID_KEY_ALIAS', 'keyAlias'),
+    keyPassword: signingValue('ANDROID_KEY_PASSWORD', 'keyPassword'),
+]
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase(Locale.ROOT).contains('release')
+}
+def missingReleaseSigning = releaseSigning.findAll { _, value -> value == null || value.trim().isEmpty() }
+if (releaseTaskRequested && !missingReleaseSigning.isEmpty()) {
+    throw new GradleException(
+        "Release signing is required. Missing values: ${missingReleaseSigning.keySet().join(', ')}. " +
+        "Set GitHub signing secrets or create ignored .signing/signing.properties."
+    )
+}
+
+android {
+    namespace = "io.elevenlabs.codexpetpause"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "io.elevenlabs.codexpetpause"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode androidVersionCode
+        versionName releaseVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (missingReleaseSigning.isEmpty()) {
+                storeFile file(releaseSigning.storeFile)
+                storePassword releaseSigning.storePassword
+                keyAlias releaseSigning.keyAlias
+                keyPassword releaseSigning.keyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    testOptions {
+        animationsDisabled = true
+        unitTests.includeAndroidResources = true
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.json:json:20240303"
+    testImplementation "androidx.test:core:1.7.0"
+    testImplementation "org.robolectric:robolectric:4.16.1"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

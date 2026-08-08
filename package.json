@@ -1,7 +1,7 @@
 {
   "name": "codex-pet-pause",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.3.0",
   "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
   "license": "MIT",
   "repository": {
@@ -22,6 +22,12 @@
     "build": "tsc -b && vite build",
     "build:pages": "tsc -b && vite build --mode pages",
     "build:e2e": "vite build --mode e2e --outDir .e2e-dist",
+    "android:build:web": "VITE_APP_HOST=android vite build --mode android --outDir dist-android",
+    "android:sync": "npm run android:build:web && cap sync android",
+    "android:apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:apk:release": "npm run android:sync && cd android && ./gradlew --no-daemon clean :app:assembleRelease",
+    "android:test:native": "cd android && ./gradlew testDebugUnitTest",
+    "android:test:instrumented": "cd android && ./gradlew :app:connectedDebugAndroidTest",
     "preview": "vite preview",
     "preview:e2e": "vite preview --outDir .e2e-dist",
     "typecheck": "tsc -b --pretty false",
@@ -57,6 +63,8 @@
     "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs",
     "test:desktop-workflow": "node --test scripts/verify-desktop-workflow.test.mjs",
     "check:desktop-workflow": "node scripts/verify-desktop-workflow.mjs",
+    "test:android-release": "node --test scripts/verify-android-release.test.mjs scripts/verify-release-safety.test.mjs scripts/verify-release-coordination.test.mjs",
+    "check:android-release": "node scripts/verify-android-release.mjs .artifacts/android",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs",
     "test:release-artifacts": "node --test scripts/verify-release-artifacts.test.mjs",
@@ -66,11 +74,14 @@
     "check:desktop-release": "npm run test:desktop-release-config && npm run test:brand-assets && npm run test:desktop-workflow && npm run test:electron && npm run test:mac-signing && npm run test:release-artifacts && npm run test:release-tag && npm run test:packaged-resources && npm run test:packaged-app && npm run check:desktop-release-config && npm run check:desktop-workflow && npm run typecheck && npm run test:run && npm run build && npm run test:e2e && npm run desktop:build && npm run desktop:smoke:packaged-resources"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/core": "8.5.0",
     "@zip.js/zip.js": "^2.8.34",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.0",
     "@axe-core/playwright": "^4.12.1",
     "@electron/asar": "^3.4.1",
     "@playwright/test": "^1.55.0",

@@ -1,0 +1,138 @@
+:root[data-android-overlay='true'],
+:root[data-android-overlay='true'] body,
+:root[data-android-overlay='true'] #root {
+  width: max-content;
+  min-width: 0;
+  height: max-content;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  color-scheme: light;
+  background: transparent !important;
+}
+
+.android-overlay-stage {
+  display: flex;
+  width: max-content;
+  height: max-content;
+  min-width: 0;
+  min-height: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+}
+
+.android-overlay-stage[data-expand='left'] {
+  flex-direction: row-reverse;
+}
+
+.android-overlay-pet {
+  width: var(--android-pet-size);
+  min-width: var(--android-pet-size);
+  height: var(--android-pet-size);
+  overflow: hidden;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  touch-action: none;
+}
+
+.android-overlay-pet .cat-sprite-stack,
+.android-overlay-pet .cat-sprite,
+.android-overlay-pet .cat-sprite-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.android-overlay-menu,
+.android-overlay-reminder {
+  box-sizing: border-box;
+  border: 1px solid rgb(64 52 38 / 18%);
+  border-radius: 16px;
+  color: #2c241c;
+  background: rgb(255 251 241 / 96%);
+  box-shadow: 0 10px 28px rgb(54 39 24 / 22%);
+}
+
+.android-overlay-menu {
+  display: grid;
+  width: 136px;
+  padding: 6px;
+}
+
+.android-overlay-menu button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  font: 700 14px/1.1 "Avenir Next", "Trebuchet MS", sans-serif;
+  text-align: left;
+}
+
+.android-overlay-menu button:active {
+  background: #f0dfc4;
+}
+
+.android-overlay-reminder {
+  width: 208px;
+  max-width: 208px;
+  padding: 12px;
+  overflow: visible;
+  font: 600 14px/1.35 "Avenir Next", "Trebuchet MS", sans-serif;
+}
+
+.android-overlay-reminder strong,
+.android-overlay-reminder p {
+  display: block;
+  margin: 0;
+}
+
+.android-overlay-reminder p {
+  margin-top: 5px;
+  color: #665746;
+}
+
+.android-reminder-progress {
+  font-size: 12px;
+}
+
+.android-reminder-primary-actions,
+.android-reminder-snooze-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.android-reminder-action-card {
+  margin-top: 8px;
+}
+
+.android-reminder-primary-actions button,
+.android-reminder-snooze-actions button,
+.android-reminder-action-card button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 9px;
+  color: #2c241c;
+  background: #f0dfc4;
+  font: 700 11px/1.15 "Avenir Next", "Trebuchet MS", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.android-reminder-action-card button {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.android-reminder-primary-actions button:disabled,
+.android-reminder-snooze-actions button:disabled,
+.android-reminder-action-card button:disabled {
+  opacity: 0.58;
+}

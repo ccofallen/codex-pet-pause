@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { readFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { I18nProvider } from '../../../i18n/I18nProvider';
 import type { Locale } from '../../../i18n/types';
 import { PetImportError } from '../domain/importPet';
 import type { CodexPetFilePair } from '../domain/importPetArchive';
+import type { AndroidPetImport, AndroidPetImportEvent } from '../../../android/infrastructure/androidPetImport';
 
 const manifestFile = new File([JSON.stringify({
   id: 'murk', displayName: 'Murk', spriteVersionNumber: 2,
@@ -41,6 +43,7 @@ async function renderLibrary(options: {
   extractArchive?: (archiveFile: File) => Promise<CodexPetFilePair>;
   strictMode?: boolean;
   locale?: Locale;
+  androidImport?: AndroidPetImport;
 } = {}) {
   const locale = options.locale ?? 'zh-CN';
   const settings = createDefaultSettings(123, locale);
@@ -61,6 +64,7 @@ async function renderLibrary(options: {
           parseImport={parseImport}
           extractArchive={extractArchive}
           now={() => 123}
+          {...(options.androidImport === undefined ? {} : { androidImport: options.androidImport })}
         />
       </I18nProvider>
     </AppProvider>
@@ -74,6 +78,18 @@ async function renderLibrary(options: {
     parseImport,
     extractArchive,
     rerenderLocale: (nextLocale: Locale) => result.rerender(library(nextLocale)),
+  };
+}
+
+function fakeAndroidImport(overrides: Partial<AndroidPetImport> = {}): AndroidPetImport {
+  return {
+    openPetdex: async () => undefined,
+    pickFiles: async () => [],
+    consumePendingArchive: async () => zipFile,
+    completePendingArchive: async () => undefined,
+    persistValidatedPet: async () => undefined,
+    subscribe: () => () => undefined,
+    ...overrides,
   };
 }
 
@@ -156,6 +172,209 @@ test('opens Petdex in the desktop shell and previews an intercepted ZIP', async 
 
   expect(extractArchive).toHaveBeenCalledWith(expect.objectContaining({ name: 'murk.zip' }));
   expect(await screen.findByRole('dialog', { name: '导入宠物预览' })).toHaveTextContent('Murk');
+});
+
+test('opens the Android security preview as soon as a Petdex download completes', async () => {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const consumePendingArchive = vi.fn(async () => zipFile);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      consumePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'download-1' }));
+
+  expect(consumePendingArchive).toHaveBeenCalledWith('download-1');
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toHaveTextContent('Murk');
+});
+
+test('keeps a claimed Petdex archive until preview cancellation explicitly advances the queue', async () => {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'download-1' }));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  expect(completePendingArchive).not.toHaveBeenCalled();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).toHaveBeenCalledWith('download-1', 'cancelled');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('acknowledges rejected Petdex validation and retries a failed native claim without deletion', async () => {
+  let rejectedListener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const rejectedCompletion = vi.fn(async () => undefined);
+  await renderLibrary({
+    extractArchive: async () => { throw new Error('invalid archive'); },
+    androidImport: fakeAndroidImport({
+      completePendingArchive: rejectedCompletion,
+      subscribe: (listener) => {
+        rejectedListener = listener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => rejectedListener?.({ type: 'pet-archive-ready', token: 'bad-download' }));
+  await waitFor(() => expect(rejectedCompletion).toHaveBeenCalledWith('bad-download', 'rejected'));
+
+  cleanup();
+  let retryListener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const retryCompletion = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      consumePendingArchive: async () => { throw new Error('temporary read failure'); },
+      completePendingArchive: retryCompletion,
+      subscribe: (listener) => {
+        retryListener = listener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => retryListener?.({ type: 'pet-archive-ready', token: 'retry-download' }));
+  await waitFor(() => expect(retryCompletion).toHaveBeenCalledWith('retry-download', 'retry'));
+  expect(screen.getByRole('alert')).toHaveTextContent('无法从 Petdex 获取这个宠物，请重试');
+});
+
+test('closes a Petdex preview after committed activation and acknowledges it as imported', async () => {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const persistValidatedPet = vi.fn(async () => undefined);
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      persistValidatedPet,
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'download-1' }));
+  await screen.findByRole('dialog', { name: '宠物安全预览' });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '保存并使用这个宠物' }));
+
+  expect(persistValidatedPet).toHaveBeenCalledWith(MURK_TEST_PET);
+  expect(completePendingArchive).toHaveBeenCalledWith('download-1', 'imported');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('当前宠物已切换');
+});
+
+test('binds the Petdex token to its own preview and blocks manual import interleaving', async () => {
+  const user = userEvent.setup();
+  const manualSelection = deferred<File[]>();
+  const petdexClaim = deferred<File>();
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      pickFiles: () => manualSelection.promise,
+      consumePendingArchive: () => petdexClaim.promise,
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+
+  await user.click(screen.getByRole('button', { name: '导入 Codex 宠物' }));
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'petdex-token' }));
+  expect(screen.getByRole('button', { name: '导入 Codex 宠物' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '浏览 Petdex 并自动导入' })).toBeDisabled();
+
+  await act(async () => manualSelection.resolve([manifestFile, atlasFile]));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).not.toHaveBeenCalled();
+
+  await act(async () => petdexClaim.resolve(zipFile));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).toHaveBeenCalledWith('petdex-token', 'cancelled');
+});
+
+test('places Android manual import below Petdex with equal full-width actions', async () => {
+  await renderLibrary({ androidImport: fakeAndroidImport() });
+
+  const buttons = screen.getAllByTestId('android-pet-import-action');
+  expect(buttons.map((button) => button.textContent)).toEqual([
+    '浏览 Petdex 并自动导入',
+    '导入 Codex 宠物',
+  ]);
+  expect(buttons.every((button) => button.classList.contains('android-pet-import-action'))).toBe(true);
+  expect(buttons[0]?.parentElement).toBe(buttons[1]?.parentElement);
+  expect(buttons[0]?.parentElement).toHaveClass('android-pet-import-actions');
+  expect(screen.queryByRole('button', { name: '拖放 Codex 宠物文件' })).not.toBeInTheDocument();
+});
+
+test('uses the Android system picker for the independent JSON and WebP workflow', async () => {
+  const pickFiles = vi.fn(async () => [manifestFile, atlasFile]);
+  await renderLibrary({ androidImport: fakeAndroidImport({ pickFiles }) });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '导入 Codex 宠物' }));
+
+  expect(pickFiles).toHaveBeenCalledOnce();
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toHaveTextContent('Murk');
+});
+
+test('keeps Android picker cancellation silent and leaves the active pet unchanged', async () => {
+  const { controller } = await renderLibrary({ androidImport: fakeAndroidImport() });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '导入 Codex 宠物' }));
+
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(controller.getSnapshot().settings.activePetId).toBe(BUILTIN_PET_ID);
+});
+
+test('requires Android preview confirmation before persisting and activating the pet', async () => {
+  const persistValidatedPet = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      pickFiles: async () => [manifestFile, atlasFile],
+      persistValidatedPet,
+    }),
+  });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '导入 Codex 宠物' }));
+  await screen.findByRole('dialog', { name: '宠物安全预览' });
+  expect(persistValidatedPet).not.toHaveBeenCalled();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '保存并使用这个宠物' }));
+  expect(persistValidatedPet).toHaveBeenCalledWith(MURK_TEST_PET);
+});
+
+test('localizes an Android Petdex launch failure without exposing native details', async () => {
+  await renderLibrary({
+    locale: 'en',
+    androidImport: fakeAndroidImport({
+      openPetdex: async () => { throw new Error('private Android activity trace'); },
+    }),
+  });
+
+  await userEvent.setup().click(screen.getByRole('button', {
+    name: 'Browse Petdex and import automatically',
+  }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Could not get this pet from Petdex. Try again.',
+  );
+  expect(screen.queryByText(/private Android activity trace/)).not.toBeInTheDocument();
 });
 
 test('accepts one ZIP by drag and drop', async () => {

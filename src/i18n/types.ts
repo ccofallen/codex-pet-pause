@@ -1,6 +1,8 @@
 import type { Translator } from './messages';
 
-export type Locale = 'zh-CN' | 'en';
+export const supportedLocales = ['zh-CN', 'en'] as const;
+
+export type Locale = typeof supportedLocales[number];
 
 export type WidenMessage<T> = T extends (...args: infer P) => string
   ? (...args: P) => string

@@ -25,7 +25,7 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function LocalizedSettingsPage({ section, now }: Required<SettingsPageProps>) {
+function LocalizedSettingsPage({ section, now }: Pick<Required<SettingsPageProps>, 'section' | 'now'>) {
   const snapshot = useAppSnapshot();
   return (
     <I18nProvider locale={snapshot.settings.locale}>

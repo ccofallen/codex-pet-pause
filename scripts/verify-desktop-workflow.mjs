@@ -15,7 +15,18 @@ const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs 
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
-const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
+const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
+
+const desktopReleaseAssetPatterns = [
+  /^Codex-Pet-Pause-.*-mac-.*\.dmg$/u,
+  /^Codex-Pet-Pause-.*-windows-.*\.exe$/u,
+  /^Codex-Pet-Pause-.*-linux-.*\.AppImage$/u,
+  /^Codex-Pet-Pause-.*-linux-.*\.deb$/u,
+];
+
+export function desktopReleaseAssetShouldBeDeleted(assetName) {
+  return desktopReleaseAssetPatterns.some((pattern) => pattern.test(assetName));
+}
 
 function hasNeed(job, expectedNeed) {
   const needs = job?.needs;
@@ -26,7 +37,114 @@ function hasRun(job, command) {
   return job?.steps?.some((step) => step.run === command);
 }
 
+function verifyDesktopProducerWorkflow(workflow) {
+  const failures = [];
+  const releaseCondition = "inputs.release_tag!=''";
+  const push = workflow?.on?.push;
+  if (!push?.branches?.includes('main')) failures.push('pushes must include main');
+  if (push?.tags !== undefined) failures.push('desktop producer must not run independently for tags');
+  if (workflow?.on?.pull_request === undefined) failures.push('pull requests must trigger the workflow');
+  if (workflow?.on?.workflow_dispatch === undefined) {
+    failures.push('workflow dispatch must trigger the workflow');
+  }
+  if (workflow?.on?.workflow_call?.inputs?.release_tag === undefined) {
+    failures.push('desktop producer must accept a coordinated release_tag input');
+  }
+  if (workflow?.permissions?.contents !== 'read') {
+    failures.push('desktop producer must use read-only repository permissions');
+  }
+
+  const jobs = workflow?.jobs ?? {};
+  for (const jobName of ['package', 'release']) {
+    if (jobs[jobName]?.if?.replaceAll(/\s+/gu, '') !== releaseCondition) {
+      failures.push(`${jobName} job must run only for coordinated releases`);
+    }
+  }
+  const allSteps = Object.values(jobs).flatMap((job) => job?.steps ?? []);
+  const externalActions = allSteps
+    .map((step) => step.uses)
+    .filter((uses) => typeof uses === 'string' && !uses.startsWith('./'));
+  for (const action of externalActions) {
+    if (!/@[a-f0-9]{40}$/u.test(action)) failures.push(`desktop action must be pinned: ${action}`);
+  }
+  if (allSteps.some((step) => /gh release (?:create|upload|delete)/u.test(step.run ?? ''))) {
+    failures.push('desktop producer must never publish GitHub Release assets directly');
+  }
+
+  const packageUpload = jobs.package?.steps?.find(
+    (step) => step.uses === 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+  );
+  if (packageUpload?.with?.name !== 'desktop-${{ matrix.id }}') {
+    failures.push('desktop matrix artifacts must use the desktop- namespace');
+  }
+
+  for (const jobName of ['package', 'release']) {
+    const steps = jobs[jobName]?.steps ?? [];
+    const tag = steps.find((step) => step.run === 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"');
+    if (tag?.env?.RELEASE_TAG !== '${{ inputs.release_tag }}') {
+      failures.push(`${jobName} job must verify the coordinated release tag`);
+    }
+  }
+  const releaseSteps = jobs.release?.steps ?? [];
+  const aggregateDownload = releaseSteps.find(
+    (step) => step.uses === 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+  );
+  if (
+    aggregateDownload?.with?.pattern !== 'desktop-*'
+    || aggregateDownload.with?.['merge-multiple'] !== true
+  ) {
+    failures.push('desktop aggregation must download only desktop-* artifacts');
+  }
+  const validationIndex = releaseSteps.findIndex(
+    (step) => step.run === releaseArtifactValidationRun,
+  );
+  const aggregateUploadIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Upload validated desktop release set',
+  );
+  const aggregateUpload = releaseSteps[aggregateUploadIndex];
+  if (
+    aggregateUploadIndex <= validationIndex
+    || aggregateUpload?.uses !== 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+    || aggregateUpload.with?.name !== 'codex-pet-pause-desktop-${{ inputs.release_tag }}'
+    || aggregateUpload.with?.path !== 'release-assets/'
+    || aggregateUpload.with?.['if-no-files-found'] !== 'error'
+  ) {
+    failures.push('desktop producer must upload the validated complete desktop set');
+  }
+
+  const compatibility = structuredClone(workflow);
+  delete compatibility.on.workflow_call;
+  compatibility.on.push.tags = ['v*'];
+  compatibility.permissions.contents = 'write';
+  compatibility.jobs.package.if = tagPushCondition;
+  compatibility.jobs.release.if = tagPushCondition;
+  const actionVersions = new Map([
+    ['actions/checkout@11d5960a326750d5838078e36cf38b85af677262', 'actions/checkout@v4'],
+    ['actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020', 'actions/setup-node@v4'],
+    ['actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02', 'actions/upload-artifact@v4'],
+    ['actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093', 'actions/download-artifact@v4'],
+  ]);
+  for (const job of Object.values(compatibility.jobs)) {
+    for (const step of job?.steps ?? []) {
+      if (actionVersions.has(step.uses)) step.uses = actionVersions.get(step.uses);
+      if (step.run === 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"') {
+        step.run = tagVersionRun;
+        delete step.env;
+      }
+    }
+  }
+  compatibility.jobs.release.steps.push({
+    name: 'Publish release assets',
+    run: publishRun,
+  });
+  failures.push(...verifyDesktopWorkflow(compatibility));
+  return failures;
+}
+
 export function verifyDesktopWorkflow(workflow) {
+  if (workflow?.on?.workflow_call !== undefined) {
+    return verifyDesktopProducerWorkflow(workflow);
+  }
   const failures = [];
   const push = workflow?.on?.push;
   if (!push?.branches?.includes('main')) failures.push('pushes must include main');

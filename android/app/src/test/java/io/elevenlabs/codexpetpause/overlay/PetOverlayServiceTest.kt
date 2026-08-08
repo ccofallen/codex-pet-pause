@@ -1,0 +1,303 @@
+package io.elevenlabs.codexpetpause.overlay
+
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.net.Uri
+import android.view.WindowManager
+import androidx.test.core.app.ApplicationProvider
+import io.elevenlabs.codexpetpause.MainActivity
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+class PetOverlayServiceTest {
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+
+    @Before
+    fun resetLifecycle() {
+        AndroidServiceLifecycle.forContext(context).preferences.edit().clear().commit()
+    }
+
+    @After
+    fun cleanupLifecycle() {
+        AndroidServiceLifecycle.forContext(context).preferences.edit().clear().commit()
+    }
+
+    @Test
+    fun windowUsesTransparentMinimalBoundsLayout() {
+        val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
+
+        val params = service.createPetLayoutParams(widthPx = 72, heightPx = 96, xPx = 8, yPx = 16)
+
+        assertEquals(PixelFormat.TRANSLUCENT, params.format)
+        assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, params.type)
+        assertTrue(params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+        assertNotEquals(WindowManager.LayoutParams.MATCH_PARENT, params.width)
+        assertNotEquals(WindowManager.LayoutParams.MATCH_PARENT, params.height)
+        assertEquals(72, params.width)
+        assertEquals(96, params.height)
+        assertEquals(8, params.x)
+        assertEquals(16, params.y)
+        assertEquals("", params.title?.toString().orEmpty())
+    }
+
+    @Test
+    fun bundledOverlayEntryResolvesFromThePackagedPublicAssetsDirectory() {
+        val factory = OverlayWebViewFactory(ApplicationProvider.getApplicationContext()) { }
+        val response = factory.intercept(Uri.parse(OverlayWebViewFactory.OVERLAY_URL))
+
+        assertEquals("https://appassets.androidplatform.net/app/index.html?overlay=1", OverlayWebViewFactory.OVERLAY_URL)
+        assertEquals(200, response.statusCode)
+        assertEquals("text/html", response.mimeType)
+        assertTrue(response.data.readBytes().isNotEmpty())
+    }
+
+    @Test
+    fun webViewAllowsOnlyBundledPublicAssetsAndImmutablePetSpritesheets() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val factory = OverlayWebViewFactory(context) { }
+        val revision = "fedcba9876543210fedcba9876543210"
+        val petRoot = File(context.filesDir, "pets/review-pet")
+        val spritesheet = File(petRoot, "$revision/spritesheet.webp")
+        val state = File(context.filesDir, "state.json")
+        spritesheet.parentFile!!.mkdirs()
+        spritesheet.writeBytes(byteArrayOf(1, 2, 3))
+        state.writeText("sensitive")
+        val webView = factory.create()
+
+        try {
+            assertFalse(webView.settings.allowFileAccess)
+            assertFalse(webView.settings.allowContentAccess)
+            assertFalse(webView.settings.allowFileAccessFromFileURLs)
+            assertFalse(webView.settings.allowUniversalAccessFromFileURLs)
+            assertTrue(webView.settings.blockNetworkLoads)
+            assertTrue(factory.isAllowedUri(Uri.parse(OverlayWebViewFactory.OVERLAY_URL)))
+            val petUri = Uri.parse(
+                "https://appassets.androidplatform.net/pet-assets/pets/review-pet/$revision/spritesheet.webp",
+            )
+            assertTrue(factory.isAllowedUri(petUri))
+            assertEquals(200, factory.intercept(petUri).statusCode)
+            assertEquals("image/webp", factory.intercept(petUri).mimeType)
+            assertFalse(factory.isAllowedUri(Uri.parse("https://appassets.androidplatform.net/pet-assets/state.json")))
+            assertEquals(
+                403,
+                factory.intercept(Uri.parse("https://appassets.androidplatform.net/pet-assets/state.json")).statusCode,
+            )
+            assertEquals(
+                403,
+                factory.intercept(Uri.parse(
+                    "https://appassets.androidplatform.net/pet-assets/pets/review-pet/$revision/metadata.json",
+                )).statusCode,
+            )
+        } finally {
+            petRoot.deleteRecursively()
+            state.delete()
+            webView.destroy()
+        }
+    }
+
+    @Test
+    fun webViewBlocksRemoteHttpSubresourcesAndNavigationFromTheBridgedPage() {
+        val factory = OverlayWebViewFactory(ApplicationProvider.getApplicationContext()) { }
+
+        listOf("http://example.com/tracker.js", "https://example.com/pet.webp").forEach { value ->
+            val uri = Uri.parse(value)
+            assertFalse(factory.isAllowedUri(uri))
+            assertEquals(403, factory.intercept(uri).statusCode)
+        }
+        assertFalse(factory.isAllowedUri(Uri.parse("file:///sdcard/pet.webp")))
+        assertFalse(factory.isAllowedUri(Uri.parse("content://media/external/pet.webp")))
+    }
+
+    @Test
+    fun javascriptBridgeExposesOneTypedMessageMethodAndRejectsUnknownMessages() {
+        val accepted = mutableListOf<OverlayWebMessage>()
+        val bridge = OverlayJavascriptBridge(accepted::add)
+        val exposed = OverlayJavascriptBridge::class.java.methods
+            .filter { it.getAnnotation(android.webkit.JavascriptInterface::class.java) != null }
+
+        bridge.postMessage("""{"type":"menu-action","action":"quit"}""")
+        bridge.postMessage("""{"type":"navigate","url":"https://example.com"}""")
+
+        assertEquals(listOf("postMessage"), exposed.map { it.name })
+        assertEquals(listOf(OverlayWebMessage.MenuAction(OverlayMenuAction.QUIT)), accepted)
+    }
+
+    @Test
+    fun serviceDispatcherSchedulesWaitAtTheSharedDoubleTapBoundary() {
+        val scheduler = RecordingWaitScheduler()
+        val results = mutableListOf<OverlayGestureResult>()
+        val dispatcher = OverlayGestureDispatcher(interpreter(), scheduler, results::add)
+
+        dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 16))
+
+        assertEquals(266L, scheduler.deadlineMs)
+        scheduler.runScheduled()
+        assertEquals(listOf(SingleTap), results)
+    }
+
+    @Test
+    fun scheduledWaitCannotStealAQualifyingSecondTap() {
+        val scheduler = RecordingWaitScheduler()
+        val results = mutableListOf<OverlayGestureResult>()
+        val dispatcher = OverlayGestureDispatcher(interpreter(), scheduler, results::add)
+
+        dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
+        dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 249))
+        scheduler.runScheduled()
+        dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301))
+
+        assertEquals(listOf(OpenMenu), results)
+    }
+
+    @Test
+    fun scheduledWaitAndBoundaryDownProduceSingleTapInEitherCallbackOrder() {
+        val waitFirstScheduler = RecordingWaitScheduler()
+        val waitFirstResults = mutableListOf<OverlayGestureResult>()
+        val waitFirst = OverlayGestureDispatcher(interpreter(), waitFirstScheduler, waitFirstResults::add)
+        waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
+        waitFirstScheduler.runScheduled()
+        waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS))
+        waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS + 16))
+
+        val downFirstScheduler = RecordingWaitScheduler()
+        val downFirstResults = mutableListOf<OverlayGestureResult>()
+        val downFirst = OverlayGestureDispatcher(interpreter(), downFirstScheduler, downFirstResults::add)
+        downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
+        downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS))
+        downFirstScheduler.runScheduled()
+        downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS + 16))
+
+        assertEquals(listOf(SingleTap), waitFirstResults)
+        assertEquals(listOf(SingleTap), downFirstResults)
+    }
+
+    @Test
+    fun declaresOnlyTheRequiredServiceCommands() {
+        assertEquals(
+            setOf("START", "SHOW", "HIDE", "QUIT", "STATE_CHANGED"),
+            PetOverlayService.COMMANDS,
+        )
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "en")
+    fun foregroundNotificationOffersShowSettingsAndQuitActions() {
+        val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
+
+        val notification = service.buildForegroundNotification()
+
+        assertEquals(listOf("Show pet", "Open settings", "Quit"), notification.actions.map { it.title.toString() })
+        assertEquals(PetOverlayService.SHOW, shadowOf(notification.actions[0].actionIntent).savedIntent.action)
+        assertEquals(MainActivity::class.java.name, shadowOf(notification.actions[1].actionIntent).savedIntent.component?.className)
+        assertEquals(PetOverlayService.QUIT, shadowOf(notification.actions[2].actionIntent).savedIntent.action)
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "zh-rCN")
+    fun foregroundNotificationActionsHaveCompleteChineseCopy() {
+        val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
+
+        assertEquals(
+            listOf("显示宠物", "打开设置", "退出"),
+            service.buildForegroundNotification().actions.map { it.title.toString() },
+        )
+    }
+
+    @Test
+    fun staleStartShowAndOpenReminderIntentsCannotClearQuit() {
+        val lifecycle = AndroidServiceLifecycle.forContext(context)
+        lifecycle.start()
+        lifecycle.quit()
+
+        listOf(
+            PetOverlayService.START,
+            PetOverlayService.SHOW,
+            PetOverlayService.OPEN_REMINDER,
+        ).forEachIndexed { index, action ->
+            val controller = Robolectric.buildService(PetOverlayService::class.java).create()
+            val service = controller.get()
+
+            val result = service.onStartCommand(
+                Intent(context, PetOverlayService::class.java).setAction(action),
+                0,
+                index + 1,
+            )
+
+            assertEquals(Service.START_NOT_STICKY, result)
+            assertFalse(lifecycle.snapshot().serviceActive)
+            assertFalse(lifecycle.snapshot().petVisible)
+            assertTrue(lifecycle.snapshot().quitRequested)
+            controller.destroy()
+        }
+    }
+
+    @Test
+    fun overlayMenuHidePersistsThroughBridgeAndStickyServiceRecreation() {
+        val lifecycle = AndroidServiceLifecycle.forContext(context)
+        lifecycle.start()
+        val firstController = Robolectric.buildService(PetOverlayService::class.java).create()
+        val firstService = firstController.get()
+        val bridge = OverlayJavascriptBridge(firstService::handleWebMessage)
+
+        bridge.postMessage("""{"type":"menu-action","action":"hide"}""")
+
+        assertTrue(lifecycle.snapshot().serviceActive)
+        assertFalse(lifecycle.snapshot().petVisible)
+        firstController.destroy()
+
+        val recreatedController = Robolectric.buildService(PetOverlayService::class.java).create()
+        val recreated = recreatedController.get()
+        assertEquals(Service.START_STICKY, recreated.onStartCommand(null, 0, 2))
+        assertFalse(lifecycle.snapshot().petVisible)
+        recreatedController.destroy()
+    }
+
+    private fun interpreter() = OverlayGestureInterpreter(
+        bounds = Bounds(widthDp = 400, heightDp = 800),
+        geometry = OverlayGeometry(defaultSizeDp = 72),
+        initialPlacement = OverlayPlacement(200, 300, 72, Attachment.Free),
+        touchSlopDp = 8,
+        doubleTapWindowMs = 250,
+    )
+}
+
+private class RecordingWaitScheduler : OverlayWaitScheduler {
+    var deadlineMs: Long? = null
+    private var scheduled: (() -> Unit)? = null
+
+    override fun scheduleAt(deadlineMs: Long, action: () -> Unit) {
+        this.deadlineMs = deadlineMs
+        scheduled = action
+    }
+
+    override fun cancel() {
+        deadlineMs = null
+        scheduled = null
+    }
+
+    fun runScheduled() {
+        val action = scheduled
+        scheduled = null
+        deadlineMs = null
+        action?.invoke()
+    }
+}

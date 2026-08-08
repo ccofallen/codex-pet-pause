@@ -2,14 +2,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parse } from 'yaml';
-import { verifyDesktopWorkflow } from './verify-desktop-workflow.mjs';
+import {
+  desktopReleaseAssetShouldBeDeleted,
+  verifyDesktopWorkflow,
+} from './verify-desktop-workflow.mjs';
 
 const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rhysd/actionlint:1.7.12 .github/workflows/build-desktop.yml';
 const tagPushCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')";
 const playwrightInstallRun = 'npx playwright install --with-deps chromium';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
-const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
+const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
 
 const validWorkflow = {
   on: {
@@ -379,11 +382,30 @@ test('rejects release reruns that can retain stale public assets', () => {
   const invalid = structuredClone(validWorkflow);
   invalid.jobs.release.steps.find((step) => step.name === 'Publish release assets').run =
     publishRun.replace(
-      '  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n',
-      '',
+      '    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n',
+      '    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n',
     );
   assert.ok(
     verifyDesktopWorkflow(invalid).some((failure) => failure.includes('delete existing release assets')),
+  );
+});
+
+test('desktop cleanup selects desktop packages but preserves an Android release fixture', () => {
+  const desktopAssets = [
+    'Codex-Pet-Pause-0.3.0-mac-arm64.dmg',
+    'Codex-Pet-Pause-0.3.0-mac-x64.dmg',
+    'Codex-Pet-Pause-0.3.0-windows-x64.exe',
+    'Codex-Pet-Pause-0.3.0-linux-x64.AppImage',
+    'Codex-Pet-Pause-0.3.0-linux-x64.deb',
+  ];
+  assert.ok(desktopAssets.every(desktopReleaseAssetShouldBeDeleted));
+  assert.equal(
+    desktopReleaseAssetShouldBeDeleted('Codex-Pet-Pause-0.3.0-android-arm64.apk'),
+    false,
+  );
+  assert.equal(
+    desktopReleaseAssetShouldBeDeleted('Codex-Pet-Pause-0.3.0-android-arm64.apk.sha256'),
+    false,
   );
 });
 

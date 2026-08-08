@@ -53,6 +53,7 @@ export interface AppController {
   getSnapshot(): AppSnapshot;
   subscribe(listener: () => void): () => void;
   hydrate(): Promise<void>;
+  applyCommittedState?(state: Pick<AppSnapshot, 'settings' | 'pets'>): void;
   reconcileNow(): Promise<void>;
   complete(id: string): Promise<void>;
   snooze(id: string, minutes: 5 | 10 | 15): Promise<void>;
@@ -567,6 +568,17 @@ export function createAppController(deps: ControllerDependencies): AppController
     subscribe(listener): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+
+    applyCommittedState({ settings, pets }): void {
+      const { petLibraryError: _petLibraryError, ...current } = snapshot;
+      publish({
+        ...current,
+        settings,
+        scheduler: schedulerFrom(settings, snapshot.scheduler.dueQueue),
+        pets: sortedPets([...pets]),
+        storageMode: 'persistent',
+      });
     },
 
     async hydrate(): Promise<void> {

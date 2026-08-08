@@ -10,9 +10,11 @@ function normalizeBasePath(value: string | undefined): string {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const base = mode === 'desktop' ? './' : normalizeBasePath(env.VITE_BASE_PATH);
+  const isAndroid = mode === 'android';
+  const base = mode === 'desktop' || isAndroid ? './' : normalizeBasePath(env.VITE_BASE_PATH);
   return {
     base,
+    build: { outDir: isAndroid ? 'dist-android' : 'dist' },
     plugins: [
       react(),
       VitePWA({
