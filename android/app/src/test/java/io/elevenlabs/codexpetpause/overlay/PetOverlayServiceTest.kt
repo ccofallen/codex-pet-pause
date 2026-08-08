@@ -4,7 +4,7 @@ import android.graphics.PixelFormat
 import android.net.Uri
 import android.view.WindowManager
 import androidx.test.core.app.ApplicationProvider
-import java.util.ArrayDeque
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -33,22 +33,73 @@ class PetOverlayServiceTest {
         assertEquals(96, params.height)
         assertEquals(8, params.x)
         assertEquals(16, params.y)
+        assertEquals("", params.title?.toString().orEmpty())
     }
 
     @Test
-    fun webViewAllowsOnlyBundledLocalOriginsAndDisablesAmbientFileAccess() {
+    fun bundledOverlayEntryResolvesFromThePackagedPublicAssetsDirectory() {
         val factory = OverlayWebViewFactory(ApplicationProvider.getApplicationContext()) { }
+        val response = factory.intercept(Uri.parse(OverlayWebViewFactory.OVERLAY_URL))
+
+        assertEquals("https://appassets.androidplatform.net/app/index.html?overlay=1", OverlayWebViewFactory.OVERLAY_URL)
+        assertEquals(200, response.statusCode)
+        assertEquals("text/html", response.mimeType)
+        assertTrue(response.data.readBytes().isNotEmpty())
+    }
+
+    @Test
+    fun webViewAllowsOnlyBundledPublicAssetsAndImmutablePetSpritesheets() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val factory = OverlayWebViewFactory(context) { }
+        val revision = "fedcba9876543210fedcba9876543210"
+        val petRoot = File(context.filesDir, "pets/review-pet")
+        val spritesheet = File(petRoot, "$revision/spritesheet.webp")
+        val state = File(context.filesDir, "state.json")
+        spritesheet.parentFile!!.mkdirs()
+        spritesheet.writeBytes(byteArrayOf(1, 2, 3))
+        state.writeText("sensitive")
         val webView = factory.create()
 
-        assertFalse(webView.settings.allowFileAccess)
-        assertFalse(webView.settings.allowContentAccess)
-        assertFalse(webView.settings.allowFileAccessFromFileURLs)
-        assertFalse(webView.settings.allowUniversalAccessFromFileURLs)
-        assertTrue(factory.isAllowedUri(Uri.parse(OverlayWebViewFactory.OVERLAY_URL)))
-        assertTrue(factory.isAllowedUri(Uri.parse(
-            "https://appassets.androidplatform.net/local-files/pets/momo/0123456789abcdef0123456789abcdef/spritesheet.webp",
-        )))
-        assertFalse(factory.isAllowedUri(Uri.parse("https://example.com/overlay")))
+        try {
+            assertFalse(webView.settings.allowFileAccess)
+            assertFalse(webView.settings.allowContentAccess)
+            assertFalse(webView.settings.allowFileAccessFromFileURLs)
+            assertFalse(webView.settings.allowUniversalAccessFromFileURLs)
+            assertTrue(webView.settings.blockNetworkLoads)
+            assertTrue(factory.isAllowedUri(Uri.parse(OverlayWebViewFactory.OVERLAY_URL)))
+            val petUri = Uri.parse(
+                "https://appassets.androidplatform.net/pet-assets/pets/review-pet/$revision/spritesheet.webp",
+            )
+            assertTrue(factory.isAllowedUri(petUri))
+            assertEquals(200, factory.intercept(petUri).statusCode)
+            assertEquals("image/webp", factory.intercept(petUri).mimeType)
+            assertFalse(factory.isAllowedUri(Uri.parse("https://appassets.androidplatform.net/pet-assets/state.json")))
+            assertEquals(
+                403,
+                factory.intercept(Uri.parse("https://appassets.androidplatform.net/pet-assets/state.json")).statusCode,
+            )
+            assertEquals(
+                403,
+                factory.intercept(Uri.parse(
+                    "https://appassets.androidplatform.net/pet-assets/pets/review-pet/$revision/metadata.json",
+                )).statusCode,
+            )
+        } finally {
+            petRoot.deleteRecursively()
+            state.delete()
+            webView.destroy()
+        }
+    }
+
+    @Test
+    fun webViewBlocksRemoteHttpSubresourcesAndNavigationFromTheBridgedPage() {
+        val factory = OverlayWebViewFactory(ApplicationProvider.getApplicationContext()) { }
+
+        listOf("http://example.com/tracker.js", "https://example.com/pet.webp").forEach { value ->
+            val uri = Uri.parse(value)
+            assertFalse(factory.isAllowedUri(uri))
+            assertEquals(403, factory.intercept(uri).statusCode)
+        }
         assertFalse(factory.isAllowedUri(Uri.parse("file:///sdcard/pet.webp")))
         assertFalse(factory.isAllowedUri(Uri.parse("content://media/external/pet.webp")))
     }
@@ -68,7 +119,7 @@ class PetOverlayServiceTest {
     }
 
     @Test
-    fun serviceDispatcherSchedulesWaitOneMillisecondPastTheDoubleTapBoundary() {
+    fun serviceDispatcherSchedulesWaitAtTheSharedDoubleTapBoundary() {
         val scheduler = RecordingWaitScheduler()
         val results = mutableListOf<OverlayGestureResult>()
         val dispatcher = OverlayGestureDispatcher(interpreter(), scheduler, results::add)
@@ -76,7 +127,7 @@ class PetOverlayServiceTest {
         dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
         dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 16))
 
-        assertEquals(267L, scheduler.deadlineMs)
+        assertEquals(266L, scheduler.deadlineMs)
         scheduler.runScheduled()
         assertEquals(listOf(SingleTap), results)
     }

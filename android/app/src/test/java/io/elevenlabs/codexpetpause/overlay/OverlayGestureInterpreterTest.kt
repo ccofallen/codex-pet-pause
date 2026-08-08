@@ -136,6 +136,16 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
+    fun waitSettlesAtTheSharedTwoHundredFiftyMillisecondBoundary() {
+        val interpreter = interpreter()
+
+        tapAtZero(interpreter)
+
+        assertEquals(DOUBLE_TAP_WINDOW_MS, 250L)
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = DOUBLE_TAP_WINDOW_MS)))
+    }
+
+    @Test
     fun expiredPendingTapIsSettledWhenNewDownArrivesAndNewUpCanPendAgain() {
         val interpreter = interpreter()
         tap(interpreter, x = 200f, y = 340f, atMs = 0)

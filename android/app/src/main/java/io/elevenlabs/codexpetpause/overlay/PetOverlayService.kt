@@ -61,7 +61,8 @@ internal class OverlayGestureDispatcher(
         val result = interpreter.consume(sample)
         if (result != NoOp) onResult(result)
         when {
-            sample.action == MotionAction.UP && result == NoOp -> scheduleWait(sample.eventTimeMs + DOUBLE_TAP_WAIT_MS)
+            sample.action == MotionAction.UP && result == NoOp ->
+                scheduleWait(sample.eventTimeMs + interpreter.doubleTapWindowMs)
             sample.action == MotionAction.CANCEL -> scheduleWait(sample.eventTimeMs + 1)
             result == OpenMenu -> scheduler.cancel()
             result is PlacementChanged || result == Restored -> scheduler.cancel()
@@ -75,10 +76,6 @@ internal class OverlayGestureDispatcher(
             val result = interpreter.consume(MotionEventSample.wait(deadlineMs))
             if (result != NoOp) onResult(result)
         }
-    }
-
-    companion object {
-        private const val DOUBLE_TAP_WAIT_MS = 251L
     }
 }
 
@@ -144,7 +141,6 @@ class PetOverlayService : Service() {
         gravity = Gravity.TOP or Gravity.START
         x = xPx
         y = yPx
-        title = "Codex Pet Pause overlay"
     }
 
     private fun startInForeground() {

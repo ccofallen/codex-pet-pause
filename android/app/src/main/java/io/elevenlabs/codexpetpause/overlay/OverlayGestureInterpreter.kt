@@ -2,6 +2,8 @@ package io.elevenlabs.codexpetpause.overlay
 
 import kotlin.math.abs
 
+const val DOUBLE_TAP_WINDOW_MS: Long = 250L
+
 enum class MotionAction {
     DOWN,
     POINTER_DOWN,
@@ -52,7 +54,7 @@ class OverlayGestureInterpreter(
     private val geometry: OverlayGeometry = OverlayGeometry(),
     initialPlacement: OverlayPlacement,
     private val touchSlopDp: Int = 8,
-    private val doubleTapWindowMs: Long = 250,
+    internal val doubleTapWindowMs: Long = DOUBLE_TAP_WINDOW_MS,
 ) {
     var placement: OverlayPlacement = initialPlacement
         private set
@@ -170,7 +172,7 @@ class OverlayGestureInterpreter(
     private fun onWait(atMs: Long): OverlayGestureResult {
         if (activeGesture?.isSecondTap == true) return OverlayGestureResult.NoOp
         val pending = pendingTapUpAtMs ?: return OverlayGestureResult.NoOp
-        if (atMs - pending <= doubleTapWindowMs) return OverlayGestureResult.NoOp
+        if (atMs - pending < doubleTapWindowMs) return OverlayGestureResult.NoOp
         pendingTapUpAtMs = null
         return OverlayGestureResult.SingleTap
     }

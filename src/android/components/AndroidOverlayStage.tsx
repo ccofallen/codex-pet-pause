@@ -6,7 +6,7 @@ import { PetSprite } from '../../features/pets/sprite/PetSprite';
 import { getCatReminderCopy, getReminderLabel } from '../../features/reminders/domain/presentation';
 import type { AndroidHostSnapshot, AndroidPetAsset } from '../bridge/androidHost';
 
-const LOCAL_FILE_ORIGIN = 'https://appassets.androidplatform.net/local-files/';
+const LOCAL_FILE_ORIGIN = 'https://appassets.androidplatform.net/pet-assets/';
 const petSizes: Record<PetSizePreference, number> = {
   small: 56,
   medium: 72,

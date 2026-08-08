@@ -95,7 +95,7 @@ test('loads a selected custom pet from its immutable bundled local-origin asset 
 
   expect(screen.getByTestId('pet-atlas-loader')).toHaveAttribute(
     'src',
-    `https://appassets.androidplatform.net/local-files/pets/momo/${REVISION}/spritesheet.webp`,
+    `https://appassets.androidplatform.net/pet-assets/pets/momo/${REVISION}/spritesheet.webp`,
   );
 });
 
