@@ -14,7 +14,7 @@ class AndroidHostPlugin : Plugin() {
     private lateinit var coordinator: AndroidStateCoordinator
 
     override fun load() {
-        coordinator = AndroidStateCoordinator(AndroidStateStore(context.filesDir))
+        coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
     }
 
     @PluginMethod

@@ -23,13 +23,14 @@ import android.webkit.WebView
 import io.elevenlabs.codexpetpause.MainActivity
 import io.elevenlabs.codexpetpause.R
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinator
-import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
-import io.elevenlabs.codexpetpause.reminders.AlarmReminderBackup
+import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
 import io.elevenlabs.codexpetpause.reminders.CloseBubble
 import io.elevenlabs.codexpetpause.reminders.CoroutineReminderLiveTimer
 import io.elevenlabs.codexpetpause.reminders.ReminderDeliveryScheduler
 import io.elevenlabs.codexpetpause.reminders.ReminderEngine
+import io.elevenlabs.codexpetpause.reminders.JobSchedulerReminderRecovery
 import io.elevenlabs.codexpetpause.reminders.ReminderNotificationFactory
+import io.elevenlabs.codexpetpause.reminders.ReminderQueueNotificationDispatcher
 import io.elevenlabs.codexpetpause.reminders.ShowReminder
 import io.elevenlabs.codexpetpause.reminders.SystemReminderClock
 import kotlin.math.roundToInt
@@ -116,14 +117,14 @@ class PetOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        coordinator = AndroidStateCoordinator(AndroidStateStore(filesDir))
+        coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
         mainHandler = Handler(Looper.getMainLooper())
         reminderEngine = ReminderEngine(coordinator)
         reminderDelivery = ReminderDeliveryScheduler(
             reminderEngine,
             SystemReminderClock,
             CoroutineReminderLiveTimer(reminderScope),
-            AlarmReminderBackup(this),
+            JobSchedulerReminderRecovery(this),
         )
         reminderNotifications = ReminderNotificationFactory(this)
         density = resources.displayMetrics.density.coerceAtLeast(1f)
@@ -146,11 +147,6 @@ class PetOverlayService : Service() {
             STATE_CHANGED -> {
                 startInForeground()
                 refreshState()
-                reconcileReminders(openWhenDue = true)
-            }
-            REMINDER_WAKE -> {
-                startInForeground()
-                showOverlay()
                 reconcileReminders(openWhenDue = true)
             }
             OPEN_REMINDER -> {
@@ -424,7 +420,9 @@ class PetOverlayService : Service() {
         val shouldNotify = queueAfter.isNotEmpty() && (!reminderReconciled || queueBefore.isEmpty())
         reminderReconciled = true
         if (shouldNotify) {
-            snapshotJson?.let { reminderNotifications.notifyDue(it, queueAfter.first()) }
+            snapshotJson?.let {
+                ReminderQueueNotificationDispatcher(reminderNotifications).show(it, queueAfter.first())
+            }
         }
         reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
         sendState()
@@ -439,7 +437,12 @@ class PetOverlayService : Service() {
         reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
         sendState()
         when (transition) {
-            is ShowReminder -> openReminderBubble()
+            is ShowReminder -> {
+                snapshotJson?.let {
+                    ReminderQueueNotificationDispatcher(reminderNotifications).show(it, transition.reminderId)
+                }
+                openReminderBubble()
+            }
             CloseBubble -> closeReminderBubble()
         }
     }
@@ -549,7 +552,6 @@ class PetOverlayService : Service() {
         const val HIDE = "HIDE"
         const val QUIT = "QUIT"
         const val STATE_CHANGED = "STATE_CHANGED"
-        const val REMINDER_WAKE = "REMINDER_WAKE"
         const val OPEN_REMINDER = "OPEN_REMINDER"
         const val SNOOZE_CURRENT = "SNOOZE_CURRENT"
         val COMMANDS: Set<String> = setOf(START, SHOW, HIDE, QUIT, STATE_CHANGED)

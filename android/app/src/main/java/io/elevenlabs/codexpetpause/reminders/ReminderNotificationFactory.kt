@@ -18,21 +18,23 @@ import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import org.json.JSONObject
 
 internal enum class ReminderPet { BUILT_IN_CAT, IMPORTED_CODEX }
-internal enum class ReminderSound { CAT, SYSTEM }
+internal enum class ReminderSound { CAT, SYSTEM, SILENT }
 
 internal class ReminderNotificationFactory(
     private val context: Context,
-) {
+) : ReminderNotificationSink {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
-    fun soundFor(pet: ReminderPet): ReminderSound = when (pet) {
-        ReminderPet.BUILT_IN_CAT -> ReminderSound.CAT
-        ReminderPet.IMPORTED_CODEX -> ReminderSound.SYSTEM
+    fun soundFor(pet: ReminderPet, soundEnabled: Boolean = true): ReminderSound = when {
+        !soundEnabled -> ReminderSound.SILENT
+        pet == ReminderPet.BUILT_IN_CAT -> ReminderSound.CAT
+        else -> ReminderSound.SYSTEM
     }
 
-    fun channelIdFor(pet: ReminderPet): String = when (soundFor(pet)) {
+    fun channelIdFor(pet: ReminderPet, soundEnabled: Boolean = true): String = when (soundFor(pet, soundEnabled)) {
         ReminderSound.CAT -> CAT_CHANNEL_ID
         ReminderSound.SYSTEM -> SYSTEM_CHANNEL_ID
+        ReminderSound.SILENT -> SILENT_CHANNEL_ID
     }
 
     fun requiresRuntimePermission(apiLevel: Int = Build.VERSION.SDK_INT): Boolean = apiLevel >= 33
@@ -55,47 +57,50 @@ internal class ReminderNotificationFactory(
                 setSound(Settings.System.DEFAULT_NOTIFICATION_URI, audio)
             },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(SILENT_CHANNEL_ID, "Silent reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Break reminders without sound"
+                setSound(null, null)
+            },
+        )
     }
 
-    fun notifyDue(snapshotJson: String, reminderId: String): Boolean {
+    override fun notifyDue(snapshotJson: String, reminderId: String): Boolean {
         ensureChannels()
         if (!canPostNotifications()) return false
+        manager.notify(REMINDER_NOTIFICATION_ID, buildDueNotification(snapshotJson, reminderId))
+        return true
+    }
+
+    fun buildDueNotification(snapshotJson: String, reminderId: String): Notification {
         val snapshot = JSONObject(snapshotJson)
         val settings = JSONObject(snapshot.getString("settingsJson"))
-        val reminder = findReminder(settings, reminderId) ?: return false
+        val reminder = requireNotNull(findReminder(settings, reminderId)) { "Unknown reminder: $reminderId" }
         val locale = settings.getString("locale")
         val pet = if (snapshot.getJSONObject("overlay").optJSONObject("activePet") == null) {
             ReminderPet.BUILT_IN_CAT
         } else {
             ReminderPet.IMPORTED_CODEX
         }
-        val notification = Notification.Builder(context, channelIdFor(pet))
+        return Notification.Builder(context, channelIdFor(pet, settings.optBoolean("soundEnabled", true)))
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(if (locale == "zh-CN") "休息提醒" else "Break reminder")
             .setContentText(reminderCopy(reminder, locale))
-            .setContentIntent(serviceIntent(OPEN_REQUEST, PetOverlayService.OPEN_REMINDER))
+            .setContentIntent(PendingIntent.getActivity(
+                context,
+                SETTINGS_REQUEST,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ))
             .setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(false)
             .addAction(action(if (locale == "zh-CN") "打开提醒" else "Open", OPEN_REQUEST, PetOverlayService.OPEN_REMINDER))
             .addAction(action(if (locale == "zh-CN") "10 分钟后" else "Snooze 10 min", SNOOZE_REQUEST, PetOverlayService.SNOOZE_CURRENT))
-            .addAction(action(if (locale == "zh-CN") "显示宠物" else "Show pet", SHOW_REQUEST, PetOverlayService.SHOW))
-            .addAction(Notification.Action.Builder(
-                null,
-                if (locale == "zh-CN") "设置" else "Settings",
-                PendingIntent.getActivity(
-                    context,
-                    SETTINGS_REQUEST,
-                    Intent(context, MainActivity::class.java),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                ),
-            ).build())
             .addAction(action(if (locale == "zh-CN") "退出" else "Quit", QUIT_REQUEST, PetOverlayService.QUIT))
             .build()
-        manager.notify(REMINDER_NOTIFICATION_ID, notification)
-        return true
     }
 
-    fun cancel() {
+    override fun cancel() {
         manager.cancel(REMINDER_NOTIFICATION_ID)
     }
 
@@ -131,10 +136,10 @@ internal class ReminderNotificationFactory(
     companion object {
         private const val CAT_CHANNEL_ID = "reminders-cat-v1"
         private const val SYSTEM_CHANNEL_ID = "reminders-system-v1"
+        private const val SILENT_CHANNEL_ID = "reminders-silent-v1"
         private const val REMINDER_NOTIFICATION_ID = 5106
         private const val OPEN_REQUEST = 6101
         private const val SNOOZE_REQUEST = 6102
-        private const val SHOW_REQUEST = 6103
         private const val SETTINGS_REQUEST = 6104
         private const val QUIT_REQUEST = 6105
         private val ZH_COPY = mapOf(

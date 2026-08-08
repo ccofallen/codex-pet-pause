@@ -1,9 +1,5 @@
 package io.elevenlabs.codexpetpause.reminders
 
-import android.app.AlarmManager
-import android.app.PendingIntent
-import android.content.Context
-import android.content.Intent
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinator
 import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
 import java.time.Instant
@@ -49,7 +45,7 @@ private data class QueuedReminder(
     val dueAt: Long,
 )
 
-internal class ReminderEngine private constructor(
+internal class ReminderEngine(
     private val coordinator: AndroidStateCoordinator,
     private val clock: ReminderClock,
     private val eventIds: ReminderEventIdSource,
@@ -77,7 +73,7 @@ internal class ReminderEngine private constructor(
         val suppressed = quietWindow != null || (pauseEnd != null && pauseEnd > now)
         if (!suppressed) markDue(state.settings, now)
 
-        if (state.settings.toString() != original) coordinator.saveSettings(state.settings.toString())
+        if (state.settings.toString() != original) coordinator.saveReminderSettings(state.settings.toString())
         return transitionFor(state.settings)
     }
 
@@ -126,6 +122,8 @@ internal class ReminderEngine private constructor(
         return (0 until reminders.length()).any { reminders.getJSONObject(it).getBoolean("enabled") }
     }
 
+    fun snapshotJson(): String? = coordinator.loadSnapshot()
+
     private fun applyAction(
         id: String,
         action: String,
@@ -143,6 +141,7 @@ internal class ReminderEngine private constructor(
             .put("reminderLabel", reminderLabel(reminder, state.settings.getString("locale")))
             .put("action", action)
             .put("occurredAt", now)
+        if (action == "snoozed") event.put("snoozedUntil", reminder.getLong("snoozedUntil"))
         if (reminder.getString("kind") == "preset") event.put("reminderType", reminder.getString("type"))
         coordinator.commitReminderAction(state.settings.toString(), event.toString())
         return transitionFor(state.settings)
@@ -287,46 +286,17 @@ internal class CoroutineReminderLiveTimer(
     }
 }
 
-internal interface ReminderBackupAlarm {
+internal interface ReminderRecoveryScheduler {
     fun schedule(triggerAtMillis: Long)
     fun cancel()
     fun setRecoveryEnabled(enabled: Boolean)
-}
-
-internal class AlarmReminderBackup(
-    private val context: Context,
-) : ReminderBackupAlarm {
-    private val alarmManager = context.getSystemService(AlarmManager::class.java)
-
-    override fun schedule(triggerAtMillis: Long) {
-        alarmManager.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAtMillis,
-            pendingIntent(),
-        )
-    }
-
-    override fun cancel() {
-        alarmManager.cancel(pendingIntent())
-    }
-
-    override fun setRecoveryEnabled(enabled: Boolean) {
-        BootReceiver.setEnabled(context, enabled)
-    }
-
-    private fun pendingIntent(): PendingIntent = PendingIntent.getBroadcast(
-        context,
-        0,
-        Intent(context, BootReceiver::class.java).setAction(BootReceiver.ACTION_REMINDER_WAKE),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
 }
 
 internal class ReminderDeliveryScheduler(
     private val engine: ReminderEngine,
     private val clock: ReminderClock,
     private val liveTimer: ReminderLiveTimer,
-    private val backupAlarm: ReminderBackupAlarm,
+    private val backupAlarm: ReminderRecoveryScheduler,
 ) {
     fun reschedule(onWake: () -> Unit) {
         liveTimer.cancel()

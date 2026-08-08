@@ -1,23 +1,33 @@
 package io.elevenlabs.codexpetpause.reminders
 
 import android.app.NotificationManager
+import android.app.job.JobScheduler
 import android.content.Context
+import android.content.Intent
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
+import io.elevenlabs.codexpetpause.MainActivity
+import io.elevenlabs.codexpetpause.R
+import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
 import io.elevenlabs.codexpetpause.bridge.AndroidStateFileSystem
 import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
 import io.elevenlabs.codexpetpause.bridge.StateFileSystem
+import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import java.io.File
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.TimeZone
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -25,6 +35,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -144,25 +155,121 @@ class ReminderEngineTest {
     fun liveTimerStopLeavesThePersistedRecoveryAlarmScheduled() {
         seed(reminders = reminders(lookAwayDueAt = 10_000L))
         val liveTimer = RecordingLiveTimer()
-        val backupAlarm = RecordingBackupAlarm()
+        val recovery = RecordingRecoveryScheduler()
         val delivery = ReminderDeliveryScheduler(
             ReminderEngine(store, clock, eventIds),
             clock,
             liveTimer,
-            backupAlarm,
+            recovery,
         )
 
         delivery.reschedule { }
 
         assertEquals(2_000L, liveTimer.delayMillis)
-        assertEquals(10_000L, backupAlarm.triggerAtMillis)
-        assertTrue(backupAlarm.recoveryIsEnabled)
+        assertEquals(10_000L, recovery.triggerAtMillis)
+        assertTrue(recovery.recoveryIsEnabled)
 
         delivery.stopLiveTimer()
 
         assertTrue(liveTimer.cancelled)
-        assertEquals(10_000L, backupAlarm.triggerAtMillis)
-        assertFalse(backupAlarm.cancelled)
+        assertEquals(10_000L, recovery.triggerAtMillis)
+        assertFalse(recovery.cancelled)
+    }
+
+    @Test
+    fun recoverySchedulesAPersistedJobServiceInsteadOfAnAlarmOrForegroundService() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recovery = JobSchedulerReminderRecovery(context, clock)
+        recovery.cancel()
+
+        recovery.schedule(10_000L)
+
+        val job = context.getSystemService(JobScheduler::class.java)
+            .getPendingJob(JobSchedulerReminderRecovery.JOB_ID)
+        assertNotNull(job)
+        assertEquals(ReminderRecoveryJobService::class.java.name, job!!.service.className)
+        assertTrue(job.isPersisted)
+        assertEquals(2_000L, job.minLatencyMillis)
+        recovery.cancel()
+    }
+
+    @Test
+    fun bootRecoveryQueuesAJobWithoutStartingTheOverlayForegroundService() {
+        seed(reminders = reminders(lookAwayDueAt = 10_000L))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val contextStore = AndroidStateStore(context.filesDir)
+        contextStore.writeSnapshot(store.readSnapshot()!!)
+        val jobs = context.getSystemService(JobScheduler::class.java)
+        jobs.cancel(JobSchedulerReminderRecovery.JOB_ID)
+        val application = shadowOf(context.applicationContext as android.app.Application)
+        while (application.nextStartedService != null) Unit
+
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+
+        assertNull(application.nextStartedService)
+        assertNotNull(jobs.getPendingJob(JobSchedulerReminderRecovery.JOB_ID))
+        jobs.cancel(JobSchedulerReminderRecovery.JOB_ID)
+        File(context.filesDir, "state.json").delete()
+    }
+
+    @Test
+    fun processDeathRecoveryReconcilesPersistedStateAndPostsTheCurrentReminder() {
+        now = 10_000L
+        seed(reminders = reminders(lookAwayDueAt = 1_000L))
+        val notifications = RecordingNotificationSink()
+        val recovery = RecordingRecoveryScheduler()
+        val dispatcher = ReminderRecoveryDispatcher(
+            ReminderEngine(store, clock, eventIds),
+            clock,
+            notifications,
+            recovery,
+        )
+
+        dispatcher.recover()
+
+        assertEquals(listOf("cancel", "notify:lookAway"), notifications.calls)
+        assertEquals("due", savedReminder("lookAway").getString("status"))
+        assertTrue(recovery.recoveryIsEnabled)
+    }
+
+    @Test
+    fun concurrentSettingsSaveAndReminderActionBothSurviveTheProcessBoundary() {
+        now = 10_000L
+        seed(reminders = reminders(lookAwayDueAt = 1_000L))
+        val staleSettings = savedSettings().put("locale", "zh-CN").toString()
+        val first = AndroidStateCoordinatorRegistry.forFilesDir(store.filesDir)
+        val second = AndroidStateCoordinatorRegistry.forFilesDir(store.filesDir)
+        assertSame(first, second)
+        val engine = ReminderEngine(first, clock, eventIds)
+        engine.reconcile(now)
+        val start = CountDownLatch(1)
+        val completed = thread {
+            start.await()
+            engine.complete("lookAway")
+        }
+        val saved = thread {
+            start.await()
+            second.saveSettings(staleSettings)
+        }
+
+        start.countDown()
+        completed.join()
+        saved.join()
+
+        assertEquals("zh-CN", savedSettings().getString("locale"))
+        assertEquals("scheduled", savedReminder("lookAway").getString("status"))
+        assertEquals(70_000L, savedReminder("lookAway").getLong("nextDueAt"))
+        assertEquals("completed", savedHistory().getJSONObject(0).getString("action"))
+    }
+
+    @Test
+    fun advancingQueueCancelsAndRepostsNotificationForTheNewCurrentReminder() {
+        val notifications = RecordingNotificationSink()
+        val dispatcher = ReminderQueueNotificationDispatcher(notifications)
+
+        dispatcher.show("snapshot-b", "drinkWater")
+
+        assertEquals(listOf("cancel", "notify:drinkWater"), notifications.calls)
     }
 
     @Test
@@ -170,24 +277,55 @@ class ReminderEngineTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory = ReminderNotificationFactory(context)
 
-        assertEquals(ReminderSound.SYSTEM, factory.soundFor(ReminderPet.IMPORTED_CODEX))
-        assertEquals(ReminderSound.CAT, factory.soundFor(ReminderPet.BUILT_IN_CAT))
+        assertEquals(ReminderSound.SYSTEM, factory.soundFor(ReminderPet.IMPORTED_CODEX, soundEnabled = true))
+        assertEquals(ReminderSound.CAT, factory.soundFor(ReminderPet.BUILT_IN_CAT, soundEnabled = true))
+        assertEquals(ReminderSound.SILENT, factory.soundFor(ReminderPet.BUILT_IN_CAT, soundEnabled = false))
         assertFalse(factory.requiresRuntimePermission(32))
         assertTrue(factory.requiresRuntimePermission(33))
     }
 
     @Test
-    fun immutableCatAndSystemChannelsUseDifferentNativeSounds() {
+    fun immutableCatSystemAndSilentChannelsUseTheirIntendedNativeSounds() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory = ReminderNotificationFactory(context)
         factory.ensureChannels()
         val manager = context.getSystemService(NotificationManager::class.java)
-        val cat = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.BUILT_IN_CAT))
-        val system = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.IMPORTED_CODEX))
+        val cat = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.BUILT_IN_CAT, soundEnabled = true))
+        val system = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.IMPORTED_CODEX, soundEnabled = true))
+        val silent = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.BUILT_IN_CAT, soundEnabled = false))
 
         assertNotEquals(cat.id, system.id)
+        assertNotEquals(cat.id, silent.id)
         assertNotEquals(Settings.System.DEFAULT_NOTIFICATION_URI, cat.sound)
         assertEquals(Settings.System.DEFAULT_NOTIFICATION_URI, system.sound)
+        assertNull(silent.sound)
+    }
+
+    @Test
+    fun reminderNotificationUsesContentSettingsAndAtMostThreeRoutedActions() {
+        now = 10_000L
+        seed(reminders = reminders(lookAwayDueAt = 1_000L))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val notification = ReminderNotificationFactory(context)
+            .buildDueNotification(store.readSnapshot()!!, "lookAway")
+
+        assertEquals(MainActivity::class.java.name, shadowOf(notification.contentIntent).savedIntent.component!!.className)
+        assertTrue(notification.actions.size <= 3)
+        assertEquals(listOf("Open", "Snooze 10 min", "Quit"), notification.actions.map { it.title.toString() })
+        assertEquals(
+            listOf(PetOverlayService.OPEN_REMINDER, PetOverlayService.SNOOZE_CURRENT, PetOverlayService.QUIT),
+            notification.actions.map { shadowOf(it.actionIntent).savedIntent.action },
+        )
+    }
+
+    @Test
+    fun catSoundCarriesDeterministicGeneratorProvenance() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val bytes = context.resources.openRawResource(R.raw.cat_meow).use { it.readBytes() }
+        val payload = bytes.toString(Charsets.ISO_8859_1)
+
+        assertTrue(payload.startsWith("RIFF"))
+        assertTrue(payload.contains("Generated by scripts/generate-android-cat-meow.mjs"))
     }
 
     private fun seed(
@@ -288,7 +426,7 @@ private class RecordingLiveTimer : ReminderLiveTimer {
     }
 }
 
-private class RecordingBackupAlarm : ReminderBackupAlarm {
+private class RecordingRecoveryScheduler : ReminderRecoveryScheduler {
     var triggerAtMillis: Long? = null
     var recoveryIsEnabled = false
     var cancelled = false
@@ -305,5 +443,18 @@ private class RecordingBackupAlarm : ReminderBackupAlarm {
 
     override fun setRecoveryEnabled(enabled: Boolean) {
         recoveryIsEnabled = enabled
+    }
+}
+
+private class RecordingNotificationSink : ReminderNotificationSink {
+    val calls = mutableListOf<String>()
+
+    override fun notifyDue(snapshotJson: String, reminderId: String): Boolean {
+        calls += "notify:$reminderId"
+        return true
+    }
+
+    override fun cancel() {
+        calls += "cancel"
     }
 }

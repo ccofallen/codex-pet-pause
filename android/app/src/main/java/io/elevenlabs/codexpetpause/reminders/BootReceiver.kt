@@ -5,31 +5,26 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
-import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
-import io.elevenlabs.codexpetpause.overlay.PetOverlayService
+import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in RESTORATION_ACTIONS) return
-        val engine = ReminderEngine(AndroidStateStore(context.filesDir))
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
+        val engine = ReminderEngine(coordinator)
+        val recovery = JobSchedulerReminderRecovery(context)
         if (!engine.hasEnabledReminders()) {
-            AlarmReminderBackup(context).apply {
+            recovery.apply {
                 cancel()
                 setRecoveryEnabled(false)
             }
             return
         }
-        ContextCompat.startForegroundService(
-            context,
-            Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.REMINDER_WAKE),
-        )
+        recovery.schedule(System.currentTimeMillis())
     }
 
     companion object {
-        const val ACTION_REMINDER_WAKE = "io.elevenlabs.codexpetpause.REMINDER_WAKE"
         private val RESTORATION_ACTIONS = setOf(
-            ACTION_REMINDER_WAKE,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             Intent.ACTION_TIME_CHANGED,

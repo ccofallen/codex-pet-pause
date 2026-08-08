@@ -43,6 +43,11 @@
                 android:value="Shows the user's break-reminder pet in a minimal system overlay" />
         </service>
 
+        <service
+            android:name=".reminders.ReminderRecoveryJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <receiver
             android:name=".reminders.BootReceiver"
             android:enabled="false"

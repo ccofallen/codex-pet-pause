@@ -12,6 +12,14 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     @Synchronized
     fun saveSettings(settingsJson: String): String {
         AndroidStateValidator.validateSettings(settingsJson)
+        val next = snapshot()
+        val merged = preserveCommittedReminderRuntime(next, settingsJson)
+        return persist(next.put("settingsJson", merged))
+    }
+
+    @Synchronized
+    fun saveReminderSettings(settingsJson: String): String {
+        AndroidStateValidator.validateSettings(settingsJson)
         return persist(snapshot().put("settingsJson", settingsJson))
     }
 
@@ -33,7 +41,10 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     fun commitReminderAction(settingsJson: String, eventJson: String): String {
         AndroidStateValidator.validateSettings(settingsJson)
         AndroidStateValidator.validateActivityEvent(eventJson)
-        val next = snapshot().put("settingsJson", settingsJson)
+        val next = snapshot()
+        val event = JSONObject(eventJson)
+        val merged = applyReminderActionToLatestSettings(next, settingsJson, event)
+        next.put("settingsJson", merged)
         next.getJSONArray("historyJson").put(eventJson)
         return persist(next)
     }
@@ -145,6 +156,70 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
 
     private fun snapshot(): JSONObject = store.readSnapshot()?.let(::JSONObject) ?: defaultSnapshot()
     private fun persist(snapshot: JSONObject): String = snapshot.toString().also(store::writeSnapshot)
+
+    private fun preserveCommittedReminderRuntime(snapshot: JSONObject, incomingJson: String): String {
+        if (snapshot.isNull("settingsJson")) return incomingJson
+        val incoming = JSONObject(incomingJson)
+        val current = JSONObject(snapshot.getString("settingsJson"))
+        val incomingReminders = incoming.getJSONArray("reminders")
+        val currentReminders = current.getJSONArray("reminders")
+        for (index in 0 until incomingReminders.length()) {
+            val candidate = incomingReminders.getJSONObject(index)
+            val committed = reminderById(currentReminders, candidate.getString("id")) ?: continue
+            if (!sameReminderSchedule(candidate, committed)) continue
+            candidate
+                .put("status", committed.getString("status"))
+                .put("nextDueAt", committed.getLong("nextDueAt"))
+            if (committed.has("snoozedUntil")) {
+                candidate.put("snoozedUntil", committed.getLong("snoozedUntil"))
+            } else {
+                candidate.remove("snoozedUntil")
+            }
+        }
+        return incoming.toString()
+    }
+
+    private fun applyReminderActionToLatestSettings(
+        snapshot: JSONObject,
+        actionSettingsJson: String,
+        event: JSONObject,
+    ): String {
+        if (snapshot.isNull("settingsJson")) return actionSettingsJson
+        val latest = JSONObject(snapshot.getString("settingsJson"))
+        val reminders = latest.getJSONArray("reminders")
+        val reminder = reminderById(reminders, event.getString("reminderId")) ?: return latest.toString()
+        if (!reminder.getBoolean("enabled")) {
+            reminder.put("status", "disabled").remove("snoozedUntil")
+            return latest.toString()
+        }
+        when (event.getString("action")) {
+            "completed", "skipped" -> reminder
+                .put("status", "scheduled")
+                .put(
+                    "nextDueAt",
+                    event.getLong("occurredAt") + reminder.getInt("intervalMinutes") * 60_000L,
+                )
+                .remove("snoozedUntil")
+            "snoozed" -> reminder
+                .put("status", "snoozed")
+                .put("snoozedUntil", event.getLong("snoozedUntil"))
+        }
+        return latest.toString()
+    }
+
+    private fun sameReminderSchedule(first: JSONObject, second: JSONObject): Boolean =
+        first.optString("id") == second.optString("id") &&
+            first.optString("kind") == second.optString("kind") &&
+            first.optBoolean("enabled") == second.optBoolean("enabled") &&
+            first.optInt("intervalMinutes") == second.optInt("intervalMinutes") &&
+            first.optString("type") == second.optString("type") &&
+            first.optString("label") == second.optString("label")
+
+    private fun reminderById(reminders: JSONArray, id: String): JSONObject? =
+        (0 until reminders.length())
+            .map(reminders::getJSONObject)
+            .firstOrNull { it.getString("id") == id }
+
     private fun defaultSnapshot() = JSONObject()
         .put("schemaVersion", 1)
         .put("settingsJson", JSONObject.NULL)
