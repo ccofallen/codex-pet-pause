@@ -71,6 +71,13 @@ function verifyDesktopProducerWorkflow(workflow) {
     failures.push('desktop producer must never publish GitHub Release assets directly');
   }
 
+  const packageUpload = jobs.package?.steps?.find(
+    (step) => step.uses === 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+  );
+  if (packageUpload?.with?.name !== 'desktop-${{ matrix.id }}') {
+    failures.push('desktop matrix artifacts must use the desktop- namespace');
+  }
+
   for (const jobName of ['package', 'release']) {
     const steps = jobs[jobName]?.steps ?? [];
     const tag = steps.find((step) => step.run === 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"');
@@ -79,6 +86,15 @@ function verifyDesktopProducerWorkflow(workflow) {
     }
   }
   const releaseSteps = jobs.release?.steps ?? [];
+  const aggregateDownload = releaseSteps.find(
+    (step) => step.uses === 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+  );
+  if (
+    aggregateDownload?.with?.pattern !== 'desktop-*'
+    || aggregateDownload.with?.['merge-multiple'] !== true
+  ) {
+    failures.push('desktop aggregation must download only desktop-* artifacts');
+  }
   const validationIndex = releaseSteps.findIndex(
     (step) => step.run === releaseArtifactValidationRun,
   );

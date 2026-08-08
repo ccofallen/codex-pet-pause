@@ -204,3 +204,52 @@ Automated tests validate the manifest backup declarations and exclusion resource
 cannot prove every OEM's device-transfer implementation. Physical arm64-device acceptance
 remains required for installation, overlay/notification permission flow, foreground
 service persistence, reminders, reboot recovery, and OEM backup/device-transfer behavior.
+
+## Second review release-coordination remediation
+
+Review starting commit: `915d0bd41af9da2299b4a4cbb96022df25edd7ff`
+
+The four new coordination contracts were written before the workflow fixes and failed
+`0/4` against the reviewed implementation for the expected reasons: unprefixed desktop
+matrix artifacts, inherited Android secrets, dependency installation in the write-capable
+publisher, and publication logic that could clobber an already-public release.
+
+- Desktop matrix artifacts now use the `desktop-*` namespace, and the reusable aggregate
+  job downloads only the explicit `desktop-*` pattern before validating the complete
+  desktop set. This prevents Android artifacts from entering desktop validation.
+- The coordinator maps only `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEY_ALIAS`,
+  `ANDROID_KEY_PASSWORD`, and `ANDROID_STORE_PASSWORD` to the Android producer; it does
+  not inherit unrelated secrets.
+- A read-only `validate` job performs checkout, `npm ci`, exact tag verification, download,
+  Android/desktop validation, and complete-set staging. Checkout credential persistence is
+  disabled in all three release workflows.
+- The sole `contents: write` publisher downloads the already-validated set and performs no
+  checkout, Node setup, package installation, or dependency lifecycle.
+- Publication fails closed when the tagged release already exists publicly. A missing
+  release is created as a draft, and only an existing draft can be retried with `--clobber`.
+  After upload, the publisher requires the release to remain a draft and compares the exact
+  sorted remote asset-name set with the validated local set before making the draft public.
+- The active plan and Task 10 brief now consistently require one universal pure-JVM/WebView
+  APK with no ABI splits or `abiFilters`; arm64 is a compatible device architecture, not an
+  APK restriction.
+
+### Second-review bounded verification
+
+| Gate | Result |
+| --- | --- |
+| Initial focused coordination contracts | RED, 0/4 for the expected missing protections |
+| Focused coordination plus release safety | PASS, 14/14 |
+| Desktop workflow contracts | PASS, 28/28 |
+| Combined Android, desktop, safety, and coordination contracts | PASS, 59/59 |
+| Android release contracts | PASS, 27/27 |
+| Release tag contracts | PASS, 3/3 |
+| Desktop release artifact contracts | PASS, 17/17 |
+| Pinned actionlint 1.7.12 on all three workflows | PASS |
+| Active plan/brief contradictory ABI claim scan | PASS, no matches |
+| Source whitespace | PASS |
+
+No Android source, resource, generated asset, or packaged payload changed in this review.
+The APK was not rebuilt. Its size remains `10552144` bytes and its SHA-256 remains
+`681e8241a17e942cb25a6aabf1d893c91bacebbfda27c9107dd0181c03efac1d`, matching the
+existing checksum file. No tag, release, asset publication, or GitHub secret update was
+performed, and existing untracked `release/` and `dist-android/` outputs were untouched.

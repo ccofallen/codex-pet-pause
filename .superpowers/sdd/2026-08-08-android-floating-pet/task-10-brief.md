@@ -20,7 +20,7 @@
 - [ ] **Step 1: Write failing artifact and workflow tests**
 
 ```js
-test('accepts exactly one signed arm64 APK and matching digest', async () => {
+test('accepts exactly one signed universal APK and matching digest', async () => {
   const result = await verifyAndroidRelease(fixtureDir, '0.3.0');
   assert.deepEqual(result.assets, [
     'Codex-Pet-Pause-0.3.0-android-universal.apk',
@@ -28,7 +28,7 @@ test('accepts exactly one signed arm64 APK and matching digest', async () => {
   ]);
 });
 
-test('rejects an unsigned or universal APK', async () => {
+test('rejects an unsigned APK or one containing native libraries', async () => {
   await assert.rejects(() => verifyAndroidRelease(unsignedFixture, '0.3.0'));
 });
 ```
@@ -43,12 +43,12 @@ Expected: FAIL because the Android release verifier and workflow are absent.
 
 The workflow must:
 
-1. Run on pull requests, `main`, tags matching `v*`, and manual dispatch.
+1. Run on pull requests, `main`, manual dispatch, and coordinated `workflow_call`; do not publish independently on tag pushes.
 2. Install Node 22, Java 21, and the Android SDK.
 3. Run `npm ci`, TypeScript/Vitest Android tests, `npm run android:sync`, Gradle unit tests, and lint.
-4. On tags, decode the keystore into the runner temp directory, build only the arm64 release APK, run `apksigner verify --print-certs`, rename it deterministically, and write `sha256sum` output.
+4. For a coordinated release, decode the keystore into the runner temp directory, build one universal APK without ABI splits or `abiFilters`, run `apksigner verify --print-certs`, rename it deterministically, and write `sha256sum` output.
 5. Upload an Actions artifact on every successful build.
-6. On tags, upload APK and digest with `gh release upload --clobber` using only the two exact Android paths.
+6. Upload the APK and digest as a validated Actions artifact; the tag coordinator publishes it only with the complete validated desktop set.
 
 Change the desktop workflow's existing Release cleanup loop to match only
 `Codex-Pet-Pause-*-mac-*.dmg`, `Codex-Pet-Pause-*-windows-*.exe`,
@@ -57,8 +57,9 @@ Extend `verify-desktop-workflow.test.mjs` with an Android fixture asset and asse
 that the cleanup filter does not select it. This is a release-safety correction;
 desktop build matrices, commands, artifact names, and binaries stay unchanged.
 
-Configure the release build with `abiFilters 'universal pure-JVM/WebView'` and bump the shared
-application version to `0.3.0` before creating tag `v0.3.0`.
+Do not configure ABI splits or `abiFilters`: the app has no native `.so` libraries, so its
+pure-JVM/WebView APK is universal and arm64 compatible. Bump the shared application version
+to `0.3.0` before creating tag `v0.3.0`.
 
 Document sideload installation, unknown-source permission, notification and
 overlay permission, the persistent service notification, Show Pet, Hide Pet,

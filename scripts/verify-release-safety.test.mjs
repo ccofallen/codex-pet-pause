@@ -123,7 +123,9 @@ test('one least-privilege publisher waits for and validates Android plus desktop
   assert.notEqual(releaseSource, '', 'coordinated release workflow must exist');
   const release = parse(releaseSource);
   assert.equal(release.permissions.contents, 'read');
-  assert.deepEqual(new Set(release.jobs.publish.needs), new Set(['android', 'desktop']));
+  assert.deepEqual(new Set(release.jobs.validate.needs), new Set(['android', 'desktop']));
+  assert.equal(release.jobs.validate.permissions.contents, 'read');
+  assert.equal(release.jobs.publish.needs, 'validate');
   assert.equal(release.jobs.publish.permissions.contents, 'write');
   assert.match(releaseSource, /node scripts\/verify-release-tag\.mjs/u);
   assert.match(releaseSource, /node scripts\/verify-release-artifacts\.mjs/u);
