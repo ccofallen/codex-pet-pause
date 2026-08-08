@@ -36,6 +36,16 @@ Release](https://github.com/ccofallen/codex-pet-pause/releases). Follow the
 [English desktop download and installation guide](docs/DESKTOP-INSTALL.md), or
 read the [Simplified Chinese desktop guide](docs/DESKTOP-INSTALL.zh-CN.md).
 
+## Android download and installation
+
+Android 9 or newer phones, including arm64 devices can install the signed APK from the
+[Codex Pet Pause GitHub Releases page](https://github.com/ccofallen/codex-pet-pause/releases).
+Follow the [English Android installation guide](docs/ANDROID-INSTALL.md) or the
+[Simplified Chinese guide](docs/ANDROID-INSTALL.zh-CN.md) for checksum verification,
+sideloading, notification permission, and the required display-over-other-apps permission.
+See the [0.3.0 release notes](docs/RELEASE-NOTES-0.3.0.md) for the Android release
+and the unchanged macOS, Windows, and Linux packages.
+
 ## Quick start for contributors
 
 Requirements: Node.js 22.12.0 or later and npm.
@@ -97,3 +107,7 @@ The built-in cat reminder sound, “Exploring curious kittens meowing,” is att
 ## License
 
 Codex Pet Pause is released under the [MIT License](LICENSE).
+
+### Universal APK compatibility
+
+The universal Android APK contains no native `.so` libraries. It is a pure JVM/WebView package compatible with arm64 devices and other CPU architectures supported by the Android runtime and system WebView.

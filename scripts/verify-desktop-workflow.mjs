@@ -15,7 +15,18 @@ const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs 
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
-const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
+const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
+
+const desktopReleaseAssetPatterns = [
+  /^Codex-Pet-Pause-.*-mac-.*\.dmg$/u,
+  /^Codex-Pet-Pause-.*-windows-.*\.exe$/u,
+  /^Codex-Pet-Pause-.*-linux-.*\.AppImage$/u,
+  /^Codex-Pet-Pause-.*-linux-.*\.deb$/u,
+];
+
+export function desktopReleaseAssetShouldBeDeleted(assetName) {
+  return desktopReleaseAssetPatterns.some((pattern) => pattern.test(assetName));
+}
 
 function hasNeed(job, expectedNeed) {
   const needs = job?.needs;

@@ -105,7 +105,11 @@ jobs:
         run: |
           if gh release view "$GITHUB_REF_NAME"; then
             gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
-              gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+              case "$asset" in
+                Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)
+                  gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+                  ;;
+              esac
             done
             gh release upload "$GITHUB_REF_NAME" release-assets/*
           else

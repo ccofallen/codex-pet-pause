@@ -35,6 +35,15 @@ Codex Pet Pause 支持兼容的 Codex 宠物 v1 和 v2 文件。可以导入仅�
 下载桌面伴侣。请参阅[简体中文桌面下载与安装指南](docs/DESKTOP-INSTALL.zh-CN.md)，
 或阅读[英文桌面安装指南](docs/DESKTOP-INSTALL.md)。
 
+## Android 下载与安装
+
+Android 9 或更高版本的手机，包括 arm64 设备可以从
+[Codex Pet Pause GitHub Releases 发布页](https://github.com/ccofallen/codex-pet-pause/releases)
+安装已签名 APK。请按照[简体中文 Android 安装指南](docs/ANDROID-INSTALL.zh-CN.md)
+完成校验和验证、侧载、通知授权和“显示在其他应用上层”授权，也可参考
+[英文 Android 安装指南](docs/ANDROID-INSTALL.md)。Android 版本与保持不变的
+macOS、Windows、Linux 安装包说明见 [0.3.0 中文发布说明](docs/RELEASE-NOTES-0.3.0.zh-CN.md)。
+
 ## 贡献者快速开始
 
 环境要求：Node.js 22.12.0 或更高版本，以及 npm。
@@ -96,3 +105,7 @@ npx playwright install chromium
 ## 许可证
 
 Codex Pet Pause 以 [MIT 许可证](LICENSE)发布。
+
+### 通用 APK 兼容性
+
+通用 Android APK 不包含任何原生 `.so` 库，是纯 JVM/WebView 软件包；它兼容 arm64 设备，也兼容 Android 运行时和系统 WebView 支持的其他 CPU 架构。

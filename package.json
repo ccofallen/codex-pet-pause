@@ -1,7 +1,7 @@
 {
   "name": "codex-pet-pause",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.3.0",
   "description": "A playful, local-first break reminder PWA with interactive and Codex-compatible pets.",
   "license": "MIT",
   "repository": {
@@ -25,6 +25,7 @@
     "android:build:web": "VITE_APP_HOST=android vite build --mode android --outDir dist-android",
     "android:sync": "npm run android:build:web && cap sync android",
     "android:apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:apk:release": "npm run android:sync && cd android && ./gradlew --no-daemon clean :app:assembleRelease",
     "android:test:native": "cd android && ./gradlew testDebugUnitTest",
     "android:test:instrumented": "cd android && ./gradlew :app:connectedDebugAndroidTest",
     "preview": "vite preview",
@@ -62,6 +63,8 @@
     "check:desktop-release-config": "node scripts/verify-desktop-release-config.mjs",
     "test:desktop-workflow": "node --test scripts/verify-desktop-workflow.test.mjs",
     "check:desktop-workflow": "node scripts/verify-desktop-workflow.mjs",
+    "test:android-release": "node --test scripts/verify-android-release.test.mjs",
+    "check:android-release": "node scripts/verify-android-release.mjs .artifacts/android",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "test:brand-assets": "npm run brand:generate && node --test scripts/generate-brand-assets.test.mjs",
     "test:release-artifacts": "node --test scripts/verify-release-artifacts.test.mjs",

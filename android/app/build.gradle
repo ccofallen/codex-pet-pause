@@ -1,6 +1,33 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def localSigningPropertiesPath = System.getenv('ANDROID_SIGNING_PROPERTIES') ?:
+    rootProject.file('../.signing/signing.properties').absolutePath
+def localSigningPropertiesFile = file(localSigningPropertiesPath)
+def localSigningProperties = new Properties()
+if (localSigningPropertiesFile.exists()) {
+    localSigningPropertiesFile.withInputStream { localSigningProperties.load(it) }
+}
+def signingValue = { environmentName, propertyName ->
+    System.getenv(environmentName) ?: localSigningProperties.getProperty(propertyName)
+}
+def releaseSigning = [
+    storeFile: signingValue('ANDROID_KEYSTORE_PATH', 'storeFile'),
+    storePassword: signingValue('ANDROID_STORE_PASSWORD', 'storePassword'),
+    keyAlias: signingValue('ANDROID_KEY_ALIAS', 'keyAlias'),
+    keyPassword: signingValue('ANDROID_KEY_PASSWORD', 'keyPassword'),
+]
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase(Locale.ROOT).contains('release')
+}
+def missingReleaseSigning = releaseSigning.findAll { _, value -> value == null || value.trim().isEmpty() }
+if (releaseTaskRequested && !missingReleaseSigning.isEmpty()) {
+    throw new GradleException(
+        "Release signing is required. Missing values: ${missingReleaseSigning.keySet().join(', ')}. " +
+        "Set GitHub signing secrets or create ignored .signing/signing.properties."
+    )
+}
+
 android {
     namespace = "io.elevenlabs.codexpetpause"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,8 +35,8 @@ android {
         applicationId "io.elevenlabs.codexpetpause"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 30000
+        versionName "0.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,8 +44,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (missingReleaseSigning.isEmpty()) {
+                storeFile file(releaseSigning.storeFile)
+                storePassword releaseSigning.storePassword
+                keyAlias releaseSigning.keyAlias
+                keyPassword releaseSigning.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
