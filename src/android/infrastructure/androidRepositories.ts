@@ -79,7 +79,9 @@ function parsePet(asset: { id: string; metadataJson: string; spritesheetBase64: 
 export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepository {
   return {
     async load(): Promise<AppSettings | null> {
-      const value = parseRecord((await host.loadSnapshot()).settingsJson, 'invalid Android settings');
+      const snapshot = await host.loadSnapshot();
+      if (snapshot === null) return null;
+      const value = parseRecord(snapshot.settingsJson, 'invalid Android settings');
       if (value.schemaVersion !== 5) throw new Error('invalid Android settings');
       return value as unknown as AppSettings;
     },
@@ -87,7 +89,8 @@ export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepo
       await host.saveSettings(JSON.stringify(value));
     },
     async clear(): Promise<void> {
-      throw new Error('Android settings clear is not supported');
+      if (host.clearSettings === undefined) throw new Error("Android settings clear is unavailable");
+      await host.clearSettings();
     },
   };
 }
@@ -98,23 +101,27 @@ export function createAndroidHistoryRepository(host: AndroidHost): HistoryReposi
       await host.appendHistory(JSON.stringify(value));
     },
     async listSince(timestamp: number): Promise<ActivityEvent[]> {
-      return (await host.loadSnapshot()).historyJson
+      const snapshot = await host.loadSnapshot();
+      return snapshot === null ? [] : snapshot.historyJson
         .map(parseHistoryEvent)
         .filter((event) => event.occurredAt >= timestamp);
     },
-    async prune(): Promise<void> {
-      throw new Error('Android history pruning is not supported');
+    async prune(now): Promise<void> {
+      const snapshot = await host.loadSnapshot();
+      if (snapshot === null) return;
+      if (host.replaceHistory === undefined) throw new Error("Android history replacement is unavailable");
+      await host.replaceHistory(snapshot!.historyJson.filter((value) => parseHistoryEvent(value).occurredAt >= now - 90 * 24 * 60 * 60 * 1000));
     },
-    async clear(): Promise<void> {
-      throw new Error('Android history clear is not supported');
-    },
+    async clear(): Promise<void> { if (host.clearHistory === undefined) throw new Error("Android history clear is unavailable");
+      await host.clearHistory(); },
   };
 }
 
 export function createAndroidPetRepository(host: AndroidHost): PetRepository {
   return {
     async list(): Promise<StoredCodexPet[]> {
-      return (await host.loadSnapshot()).pets.map(parsePet);
+      const snapshot = await host.loadSnapshot();
+      return snapshot === null ? [] : snapshot.pets.map(parsePet);
     },
     async put(value: StoredCodexPet): Promise<void> {
       const { spritesheet, ...metadata } = value;
@@ -131,8 +138,8 @@ export function createAndroidPetRepository(host: AndroidHost): PetRepository {
       await host.deletePet(id);
     },
     async clear(): Promise<void> {
-      const pets = await host.loadSnapshot();
-      await Promise.all(pets.pets.map((pet) => host.deletePet(pet.id)));
+      if (host.clearPets === undefined) throw new Error("Android pet clear is unavailable");
+      await host.clearPets();
     },
   };
 }

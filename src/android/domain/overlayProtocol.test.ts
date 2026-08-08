@@ -40,7 +40,7 @@ describe('parseAndroidHostSnapshot', () => {
       },
     }));
 
-    expect(value.overlay).toEqual({ xRatio: 0.82, yRatio: 0.72 });
+    expect(value!.overlay).toEqual({ xRatio: 0.82, yRatio: 0.72 });
   });
 
   test('rejects malformed JSON payloads instead of passing them to repositories', () => {

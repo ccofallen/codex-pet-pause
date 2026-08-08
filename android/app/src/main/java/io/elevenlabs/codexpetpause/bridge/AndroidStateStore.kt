@@ -65,12 +65,12 @@ internal class AndroidStateFileSystem : StateFileSystem {
     }
 }
 
-class AndroidStateStore(
-    private val filesDir: File,
-    private val fileSystem: StateFileSystem = AndroidStateFileSystem(),
+internal class AndroidStateStore(
+    internal val filesDir: File,
+    internal val fileSystem: StateFileSystem = AndroidStateFileSystem(),
 ) {
     private val stateFile = File(filesDir, "state.json")
-    private val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    internal val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
     fun readSnapshot(): String? = fileSystem.readText(stateFile)
 
@@ -105,5 +105,42 @@ class AndroidStateStore(
     fun deletePet(id: String) {
         require(safePetId.matches(id)) { "Unsafe Android pet id" }
         fileSystem.deleteRecursively(File(File(filesDir, "pets"), id))
+    }
+}
+
+internal fun AndroidStateStore.savePetAndSnapshot(id: String, metadataJson: String, spritesheetBase64: String, snapshotJson: String) {
+    val previous = readSnapshot()
+    writeSnapshot(snapshotJson)
+    try { writePet(id, metadataJson, spritesheetBase64) }
+    catch (error: Throwable) { if (previous != null) writeSnapshot(previous); throw error }
+}
+internal fun AndroidStateStore.deletePetAndSnapshot(id: String, snapshotJson: String) {
+    require(safePetId.matches(id)) { "Unsafe Android pet id" }
+    val previous = readSnapshot()
+    val target = File(File(filesDir, "pets"), id)
+    val backup = fileSystem.createTemporarySibling(target)
+    var phase = "backup"
+    try {
+        fileSystem.replaceDirectory(target, backup)
+        phase = "snapshot"
+        writeSnapshot(snapshotJson)
+        phase = "cleanup"
+        fileSystem.deleteRecursively(backup)
+    } catch (error: Throwable) {
+        var recovery: Throwable? = null
+        try {
+            fileSystem.replaceDirectory(backup, target)
+        } catch (restore: Throwable) {
+            recovery = restore
+        }
+        try {
+            if (previous != null) writeSnapshot(previous)
+        } catch (restore: Throwable) {
+            if (recovery == null) recovery = restore
+        }
+        val state = if (recovery == null) "complete" else "failed"
+        throw IOException("delete transaction failed during $phase; recovery=$state", error).also {
+            if (recovery != null) it.addSuppressed(recovery)
+        }
     }
 }

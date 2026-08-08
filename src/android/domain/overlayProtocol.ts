@@ -36,6 +36,7 @@ function parseJsonObject(value: unknown, message: string): string {
   } catch {
     throw new Error(message);
   }
+  if ((JSON.parse(value) as RecordValue).schemaVersion !== 5) throw new Error(message);
   return value;
 }
 
@@ -63,7 +64,8 @@ function repairRatio(value: unknown, fallback: number): number {
     : fallback;
 }
 
-export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot {
+export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | null {
+  if (value === null) return null;
   if (!isRecord(value) || value.schemaVersion !== ANDROID_STATE_SCHEMA_VERSION) {
     throw new Error('unsupported Android state schema');
   }

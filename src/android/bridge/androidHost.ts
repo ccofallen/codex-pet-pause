@@ -19,7 +19,11 @@ export interface AndroidHostEvent {
 }
 
 export interface AndroidHost {
-  loadSnapshot(): Promise<AndroidHostSnapshot>;
+  loadSnapshot(): Promise<AndroidHostSnapshot | null>;
+  clearSettings?: () => Promise<void>;
+  replaceHistory?: (historyJson: readonly string[]) => Promise<void>;
+  clearHistory?: () => Promise<void>;
+  clearPets?: () => Promise<void>;
   saveSettings(settingsJson: string): Promise<void>;
   appendHistory(eventJson: string): Promise<void>;
   savePet(input: AndroidPetWrite): Promise<void>;
@@ -30,6 +34,10 @@ export interface AndroidHost {
 
 export interface AndroidHostPlugin {
   loadSnapshot(): Promise<unknown>;
+  clearSettings?: () => Promise<void>;
+  replaceHistory?: (options: { historyJson: string[] }) => Promise<void>;
+  clearHistory?: () => Promise<void>;
+  clearPets?: () => Promise<void>;
   saveSettings(options: { json: string }): Promise<void>;
   appendHistory(options: { json: string }): Promise<void>;
   savePet(options: AndroidPetWrite): Promise<void>;
@@ -56,9 +64,14 @@ function requireSafePetId(id: string): void {
 
 export function createAndroidHost(plugin: AndroidHostPlugin): AndroidHost {
   return {
-    async loadSnapshot(): Promise<AndroidHostSnapshot> {
+    async loadSnapshot(): Promise<AndroidHostSnapshot | null> {
       return parseAndroidHostSnapshot(await plugin.loadSnapshot());
     },
+
+    async clearSettings(): Promise<void> { await plugin.clearSettings!(); },
+    async replaceHistory(historyJson): Promise<void> { await plugin.replaceHistory!({ historyJson: [...historyJson] }); },
+    async clearHistory(): Promise<void> { await plugin.clearHistory!(); },
+    async clearPets(): Promise<void> { await plugin.clearPets!(); },
 
     async saveSettings(settingsJson: string): Promise<void> {
       requireJsonObject(settingsJson, 'invalid Android settings JSON');
@@ -93,7 +106,8 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidHost {
       void plugin.addListener('stateChanged', (event) => {
         if (disposed || typeof event !== 'object' || event === null || !('snapshot' in event)) return;
         try {
-          listener({ type: 'stateChanged', snapshot: parseAndroidHostSnapshot(event.snapshot) });
+          const snapshot = parseAndroidHostSnapshot(event.snapshot);
+          if (snapshot !== null) listener({ type: 'stateChanged', snapshot });
         } catch {
           // Native storage is untrusted input; malformed change events are discarded.
         }
