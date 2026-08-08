@@ -269,3 +269,26 @@ GREEN:
 - Full native unit/Robolectric suite: BUILD SUCCESSFUL.
 - Android `assembleDebug`: BUILD SUCCESSFUL.
 - All commands used hard timeouts and the supplied JDK 21/Android SDK environment. No command timed out or hung.
+
+## Final journal reconciliation and ServiceWorker leak findings resolved (2026-08-08)
+
+- Pending completion reconciliation now clears `claimedToken` or `announcedToken` only when it matches the idempotently completed token, then returns/announces the actual next FIFO token. A different active claim remains untouched.
+- The exact ZIP-to-`.ack` success followed by completion-publication failure is covered through an injected journal publisher. Retry cleanup records completion, compacts the released archive, clears the matching claim, and immediately advances to the next token.
+- Per-token `.done` markers were replaced by one atomically replaced `completed-tokens.journal` containing at most 16 safe, deduplicated tokens.
+- Legacy `.done` files are migrated once into the bounded journal before cleanup. Failed legacy deletion cannot expand the logical history, and subsequent acknowledgements never create additional completion-marker inodes.
+- Released archives are compacted into one fixed `.released-archive.ack` path before best-effort deletion, so repeated deletion failures do not create one tombstone inode per acknowledgement.
+- The process-lifetime ServiceWorker deny client and blocked response now live in `PetdexProcessServiceWorkerPolicy`, a static object with no Activity, WebView, or Context reference. PetdexActivity only installs that process-scoped singleton.
+
+### Final RED/GREEN evidence
+
+RED:
+- Focused native compilation failed on the intentionally missing injected journal-publication seam, proving the exact release-then-publication-failure test required a production contract.
+- Prior behavior also lacked the process policy object and retained matching claim state on idempotent completion.
+
+GREEN:
+- Focused native ServiceWorker/journal/store/queue suite: BUILD SUCCESSFUL.
+- Full web: 68 files, 794 tests passed.
+- TypeScript typecheck: passed.
+- Full native unit/Robolectric suite: BUILD SUCCESSFUL.
+- Android `assembleDebug`: BUILD SUCCESSFUL.
+- All validation used hard timeouts and the supplied JDK 21/Android SDK environment. No command timed out.

@@ -2,6 +2,7 @@ package io.elevenlabs.codexpetpause.petdex
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.Locale
@@ -23,6 +24,9 @@ internal class PendingPetArchiveStore(
     private val archiveTtlMillis: Long = DEFAULT_ARCHIVE_TTL_MILLIS,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val deleteFile: (File) -> Boolean = { it.delete() },
+    private val publishCompletedJournal: (File, File) -> Boolean = { source, target ->
+        source.renameTo(target)
+    },
 ) {
     private val directory = File(rootDirectory, "pending-pet-archives")
     private val safeToken = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -108,20 +112,20 @@ internal class PendingPetArchiveStore(
         requireSafeToken(token)
         ensureDirectory()
         cleanupLocked()
-        if (completedFile(token).isFile) return@synchronized
+        if (token in completedTokensLocked()) return@synchronized
         val file = archiveFile(token)
         val tombstone = tombstoneFile(token)
         if (file.isFile && !file.renameTo(tombstone)) {
             throw IOException("Could not release acknowledged pet archive")
         }
         markCompletedLocked(token)
-        deleteFile(tombstone)
+        compactReleasedArchiveLocked(tombstone)
     }
 
     fun isCompleted(token: String): Boolean = synchronized(STORE_LOCK) {
         requireSafeToken(token)
         cleanupLocked()
-        completedFile(token).isFile
+        token in completedTokensLocked()
     }
 
     fun pendingTokens(): List<String> = synchronized(STORE_LOCK) {
@@ -145,20 +149,22 @@ internal class PendingPetArchiveStore(
     private fun cleanupLocked() {
         if (!directory.exists()) return
         val cutoff = clockMillis() - archiveTtlMillis
+        migrateLegacyCompletedFilesLocked(cutoff)
         directory.listFiles().orEmpty().forEach { file ->
             when {
                 !file.isFile || file.name.endsWith(".tmp") -> deleteFile(file)
+                file.name == RELEASED_ARCHIVE_FILE -> deleteFile(file)
                 file.name.startsWith(".") && file.name.endsWith(".ack") -> {
                     val token = file.name.removePrefix(".").removeSuffix(".ack")
                     if (safeToken.matches(token) && file.lastModified() > cutoff) {
                         markCompletedLocked(token)
+                        compactReleasedArchiveLocked(file)
+                    } else {
+                        deleteFile(file)
                     }
-                    deleteFile(file)
                 }
-                file.name.endsWith(".done") -> {
-                    val token = file.name.removeSuffix(".done")
-                    if (!safeToken.matches(token) || file.lastModified() <= cutoff) deleteFile(file)
-                }
+                file.name.endsWith(".done") -> deleteFile(file)
+                file.name == COMPLETED_JOURNAL_FILE -> Unit
                 file.name.endsWith(".zip") -> {
                     val token = file.name.removeSuffix(".zip")
                     if (!safeToken.matches(token) || file.lastModified() <= cutoff) deleteFile(file)
@@ -166,30 +172,72 @@ internal class PendingPetArchiveStore(
                 else -> deleteFile(file)
             }
         }
-        pruneCompletedLocked()
     }
 
     private fun markCompletedLocked(token: String) {
-        val completed = completedFile(token)
-        if (completed.isFile) return
-        val temporary = File(directory, ".$token.done.tmp")
-        try {
-            temporary.writeBytes(ByteArray(0))
-            if (!temporary.renameTo(completed)) throw IOException("Could not record completed pet archive")
-            completed.setLastModified(clockMillis())
-        } catch (error: Throwable) {
-            temporary.delete()
-            throw error
-        }
-        pruneCompletedLocked()
+        val current = completedTokensLocked()
+        if (token in current) return
+        writeCompletedJournalLocked((current + token).takeLast(MAX_COMPLETED_TOKENS))
     }
 
-    private fun pruneCompletedLocked() {
-        directory.listFiles().orEmpty()
+    private fun completedTokensLocked(): List<String> {
+        migrateLegacyCompletedFilesLocked(clockMillis() - archiveTtlMillis)
+        val journal = File(directory, COMPLETED_JOURNAL_FILE)
+        if (!journal.isFile) return emptyList()
+        val raw = runCatching { journal.readLines() }.getOrElse { throw IOException("Could not read completion journal", it) }
+        val bounded = boundedTokens(raw)
+        if (raw != bounded) writeCompletedJournalLocked(bounded)
+        return bounded
+    }
+
+    private fun boundedTokens(values: List<String>): List<String> {
+        val bounded = ArrayList<String>(MAX_COMPLETED_TOKENS)
+        values.filter(safeToken::matches).forEach { token ->
+            bounded.remove(token)
+            bounded.add(token)
+            if (bounded.size > MAX_COMPLETED_TOKENS) bounded.removeAt(0)
+        }
+        return bounded
+    }
+
+    private fun writeCompletedJournalLocked(tokens: List<String>) {
+        val temporary = File(directory, COMPLETED_JOURNAL_TEMP_FILE)
+        val journal = File(directory, COMPLETED_JOURNAL_FILE)
+        try {
+            FileOutputStream(temporary, false).use { output ->
+                output.write(tokens.joinToString(separator = "\n", postfix = if (tokens.isEmpty()) "" else "\n").toByteArray())
+                output.fd.sync()
+            }
+            if (!publishCompletedJournal(temporary, journal)) {
+                throw IOException("Could not publish completed pet archive journal")
+            }
+            journal.setLastModified(clockMillis())
+        } catch (error: Throwable) {
+            throw error
+        }
+    }
+
+    private fun migrateLegacyCompletedFilesLocked(cutoff: Long) {
+        val legacy = directory.listFiles().orEmpty()
             .filter { it.isFile && it.name.endsWith(".done") }
             .sortedWith(compareBy(File::lastModified, File::getName))
-            .dropLast(MAX_COMPLETED_TOKENS)
-            .forEach { deleteFile(it) }
+        val journal = File(directory, COMPLETED_JOURNAL_FILE)
+        if (!journal.isFile) {
+            val tokens = boundedTokens(legacy
+                .filter { it.lastModified() > cutoff }
+                .map { it.name.removeSuffix(".done") })
+            if (tokens.isNotEmpty()) writeCompletedJournalLocked(tokens)
+        }
+        if (journal.isFile) legacy.forEach { deleteFile(it) }
+    }
+
+    private fun compactReleasedArchiveLocked(tombstone: File) {
+        if (!tombstone.isFile) return
+        val released = File(directory, RELEASED_ARCHIVE_FILE)
+        if (!tombstone.renameTo(released)) {
+            throw IOException("Could not compact released pet archive")
+        }
+        deleteFile(released)
     }
 
     private fun pendingFilesLocked(): List<File> = directory.listFiles()
@@ -236,7 +284,6 @@ internal class PendingPetArchiveStore(
 
     private fun archiveFile(token: String) = File(directory, "$token.zip")
     private fun tombstoneFile(token: String) = File(directory, ".$token.ack")
-    private fun completedFile(token: String) = File(directory, "$token.done")
     private fun archiveName(token: String) = "pet-$token.zip"
 
     companion object {
@@ -245,6 +292,9 @@ internal class PendingPetArchiveStore(
         internal const val DEFAULT_MAX_PENDING_ARCHIVES = 4
         internal const val DEFAULT_ARCHIVE_TTL_MILLIS = 24L * 60L * 60L * 1_000L
         internal const val MAX_COMPLETED_TOKENS = 16
+        private const val COMPLETED_JOURNAL_FILE = "completed-tokens.journal"
+        private const val COMPLETED_JOURNAL_TEMP_FILE = ".completed-tokens.tmp"
+        private const val RELEASED_ARCHIVE_FILE = ".released-archive.ack"
         private val STORE_LOCK = Any()
         private val ARCHIVE_MIME_TYPES = setOf(
             "application/zip",

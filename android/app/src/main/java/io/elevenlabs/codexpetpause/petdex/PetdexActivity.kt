@@ -7,7 +7,6 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.SafeBrowsingResponse
-import android.webkit.ServiceWorkerClient
 import android.webkit.ServiceWorkerController
 import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
@@ -130,7 +129,6 @@ internal object PetdexRestorePolicy {
 class PetdexActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var store: PendingPetArchiveStore
-    private var serviceWorkerController: ServiceWorkerController? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val downloadInProgress = AtomicBoolean(false)
 
@@ -252,20 +250,15 @@ class PetdexActivity : AppCompatActivity() {
 
     private fun configureServiceWorkerPolicy() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-        serviceWorkerController = ServiceWorkerController.getInstance().also { controller ->
+        ServiceWorkerController.getInstance().also { controller ->
             controller.serviceWorkerWebSettings.apply {
                 allowContentAccess = false
                 allowFileAccess = false
                 blockNetworkLoads = true
                 cacheMode = WebSettings.LOAD_NO_CACHE
             }
-            controller.setServiceWorkerClient(denyAllServiceWorkerClient())
+            controller.setServiceWorkerClient(PetdexProcessServiceWorkerPolicy.client)
         }
-    }
-
-    private fun denyAllServiceWorkerClient() = object : ServiceWorkerClient() {
-        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
-            blockedResponse()
     }
 
     private fun interceptRequest(url: String): WebResourceResponse? =
