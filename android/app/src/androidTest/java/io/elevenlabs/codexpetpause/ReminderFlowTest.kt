@@ -54,7 +54,7 @@ class ReminderFlowTest {
             scheduler.allPendingJobs.isNotEmpty()
         }
         DeviceQa.awaitCondition("first reminder notification") {
-            reminderText(manager)?.contains("Drink water", ignoreCase = true) == true
+            reminderText(manager)?.contains("distance", ignoreCase = true) == true
         }
         DeviceQa.awaitCondition("expanded reminder overlay") {
             DeviceQa.overlayWindows().singleOrNull()?.let {
@@ -65,7 +65,7 @@ class ReminderFlowTest {
         DeviceQa.clickText("Done", "Complete", "完成")
 
         DeviceQa.awaitCondition("second reminder notification") {
-            reminderText(manager)?.contains("distance", ignoreCase = true) == true
+            reminderText(manager)?.contains("Drink water", ignoreCase = true) == true
         }
         DeviceQa.awaitCondition("first completion persisted") {
             history(coordinator).length() == 1

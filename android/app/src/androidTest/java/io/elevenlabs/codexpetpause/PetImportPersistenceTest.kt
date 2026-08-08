@@ -3,7 +3,9 @@ package io.elevenlabs.codexpetpause
 import android.graphics.BitmapFactory
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinator
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
+import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import java.io.ByteArrayInputStream
@@ -65,8 +67,9 @@ class PetImportPersistenceTest {
             DeviceQa.awaitText("Task 9 Momo")
         }
 
-        AndroidStateCoordinatorRegistry.resetForTests()
-        val reconstructed = AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir)
+        val reconstructed = AndroidStateCoordinator(
+            AndroidStateStore(DeviceQa.context.filesDir),
+        )
         val snapshot = JSONObject(requireNotNull(reconstructed.loadSnapshot()))
         val selected = JSONObject(snapshot.getString("settingsJson")).getString("activePetId")
         val pet = snapshot.getJSONArray("pets").let { pets ->

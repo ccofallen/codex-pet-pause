@@ -8,7 +8,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -100,6 +102,7 @@ class PetOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var coordinator: AndroidStateCoordinator
     private lateinit var mainHandler: Handler
+    private lateinit var displayManager: DisplayManager
     private lateinit var reminderEngine: ReminderEngine
     private lateinit var reminderDelivery: ReminderDeliveryScheduler
     private lateinit var reminderNotifications: ReminderNotificationFactory
@@ -116,6 +119,12 @@ class PetOverlayService : Service() {
     private var snapshotJson: String? = null
     private var density = 1f
     private var reminderReconciled = false
+    private val displayReflowRunnable = Runnable(::reflowOverlayForCurrentDisplay)
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = scheduleDisplayReflow()
+        override fun onDisplayRemoved(displayId: Int) = scheduleDisplayReflow()
+        override fun onDisplayChanged(displayId: Int) = scheduleDisplayReflow()
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -125,6 +134,8 @@ class PetOverlayService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
         mainHandler = Handler(Looper.getMainLooper())
+        displayManager = getSystemService(DisplayManager::class.java)
+        displayManager.registerDisplayListener(displayListener, mainHandler)
         reminderEngine = ReminderEngine(coordinator)
         reminderDelivery = ReminderDeliveryScheduler(
             reminderEngine,
@@ -137,6 +148,11 @@ class PetOverlayService : Service() {
         density = resources.displayMetrics.density.coerceAtLeast(1f)
         createNotificationChannel()
         reminderNotifications.ensureChannels()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        scheduleDisplayReflow()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -189,6 +205,8 @@ class PetOverlayService : Service() {
     override fun onDestroy() {
         unsubscribeStateRefresh?.invoke()
         unsubscribeStateRefresh = null
+        displayManager.unregisterDisplayListener(displayListener)
+        mainHandler.removeCallbacks(displayReflowRunnable)
         reminderDelivery.stopLiveTimer()
         reminderScope.cancel()
         removeAllOverlayViews()
@@ -313,6 +331,32 @@ class PetOverlayService : Service() {
         webView = null
         layoutParams = null
         surfaceMode = SurfaceMode.PET
+    }
+
+    private fun scheduleDisplayReflow() {
+        if (!::mainHandler.isInitialized) return
+        mainHandler.removeCallbacks(displayReflowRunnable)
+        mainHandler.post(displayReflowRunnable)
+    }
+
+    private fun reflowOverlayForCurrentDisplay() {
+        if (webView == null) return
+        val params = layoutParams ?: return
+        val previousDensity = density
+        val widthDp = (params.width / previousDensity).roundToInt().coerceAtLeast(1)
+        val heightDp = (params.height / previousDensity).roundToInt().coerceAtLeast(1)
+        val previousBounds = screenBounds
+        density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val currentBounds = currentScreenBounds()
+        if (currentBounds == previousBounds && density == previousDensity) return
+
+        placement = geometry.reflowForBounds(placement, previousBounds, currentBounds)
+        screenBounds = currentBounds
+        rebuildDispatcher()
+        updateSurfaceBounds(widthDp, heightDp)
+        placementDirty = true
+        persistPlacement()
+        sendPlacementChanged()
     }
 
     private fun refreshState() {

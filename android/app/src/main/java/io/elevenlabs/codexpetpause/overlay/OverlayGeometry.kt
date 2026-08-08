@@ -144,6 +144,35 @@ class OverlayGeometry(
         return OverlayPlacement(point.x.roundToInt(), point.y.roundToInt(), newSizeDp, Attachment.Free)
     }
 
+    fun reflowForBounds(
+        placement: OverlayPlacement,
+        previousBounds: Bounds,
+        currentBounds: Bounds,
+    ): OverlayPlacement {
+        val mapped = placement.copy(
+            x = remapAxis(
+                placement.x,
+                previousBounds.left,
+                maxX(previousBounds, placement.sizeDp),
+                currentBounds.left,
+                maxX(currentBounds, placement.sizeDp),
+            ),
+            y = remapAxis(
+                placement.y,
+                previousBounds.top,
+                maxY(previousBounds, placement.sizeDp),
+                currentBounds.top,
+                maxY(currentBounds, placement.sizeDp),
+            ),
+        )
+        val edge = placement.attachment as? Attachment.Edge
+        if (edge != null) {
+            return if (edge.retracted) retract(mapped, currentBounds) else restore(mapped, currentBounds)
+        }
+        val clamped = clamp(PointF(mapped.x.toFloat(), mapped.y.toFloat()), currentBounds, mapped.sizeDp)
+        return mapped.copy(x = clamped.x.roundToInt(), y = clamped.y.roundToInt())
+    }
+
     fun visibleLength(placement: OverlayPlacement, bounds: Bounds): Int {
         val edge = placement.attachment as? Attachment.Edge ?: return placement.sizeDp
         return when (edge.side) {
@@ -167,4 +196,18 @@ class OverlayGeometry(
     private fun maxX(bounds: Bounds, sizeDp: Int): Int = maxOf(bounds.left, bounds.right - sizeDp)
 
     private fun maxY(bounds: Bounds, sizeDp: Int): Int = maxOf(bounds.top, bounds.bottom - sizeDp)
+
+    private fun remapAxis(
+        value: Int,
+        previousStart: Int,
+        previousEnd: Int,
+        currentStart: Int,
+        currentEnd: Int,
+    ): Int {
+        val previousSpan = (previousEnd - previousStart).coerceAtLeast(0)
+        val currentSpan = (currentEnd - currentStart).coerceAtLeast(0)
+        if (previousSpan == 0) return currentStart
+        val ratio = ((value - previousStart).toFloat() / previousSpan).coerceIn(0f, 1f)
+        return (currentStart + currentSpan * ratio).roundToInt()
+    }
 }

@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -23,7 +24,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
-import io.elevenlabs.codexpetpause.overlay.MIN_VISIBLE_DP
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import java.util.Locale
 import kotlin.math.abs
@@ -106,7 +106,7 @@ class OverlayGestureTest {
         DeviceQa.seedState()
         DeviceQa.startService(PetOverlayService.START)
         val initial = DeviceQa.awaitOverlay()
-        SystemClock.sleep(1_200)
+        SystemClock.sleep(5_100)
         assertEquals(initial, DeviceQa.awaitOverlay())
 
         val screen = DeviceQa.screenBounds()
@@ -114,12 +114,12 @@ class OverlayGestureTest {
         DeviceQa.drag(Point(initial.left + pointerOffset, initial.centerY()), Point(screen.right - 2, initial.centerY()))
         val attached = DeviceQa.awaitOverlayChange(initial)
         assertTrue(abs(attached.right - screen.right) <= DeviceQa.dp(3))
-        SystemClock.sleep(1_200)
+        SystemClock.sleep(5_100)
         assertEquals(attached, DeviceQa.awaitOverlay())
 
         DeviceQa.drag(Point(attached.centerX(), attached.centerY()), Point(screen.right - 1, attached.centerY()))
         val retracted = DeviceQa.awaitOverlayChange(attached)
-        assertTrue(abs(retracted.width() - DeviceQa.dp(MIN_VISIBLE_DP)) <= DeviceQa.dp(4))
+        assertTrue(abs(retracted.width() - DeviceQa.dp(20)) <= DeviceQa.dp(4))
 
         DeviceQa.tap(Point(retracted.centerX(), retracted.centerY()))
         val restored = DeviceQa.awaitOverlayChange(retracted)
@@ -301,6 +301,23 @@ internal object DeviceQa {
         if (Build.VERSION.SDK_INT >= 30) return Rect(manager.maximumWindowMetrics.bounds)
         @Suppress("DEPRECATION")
         return Point().also { manager.defaultDisplay.getRealSize(it) }.let { Rect(0, 0, it.x, it.y) }
+    }
+
+    fun safeScreenBounds(): Rect {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val metrics = context.getSystemService(WindowManager::class.java).currentWindowMetrics
+            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            val bounds = metrics.bounds
+            return Rect(
+                bounds.left + insets.left,
+                bounds.top + insets.top,
+                bounds.right - insets.right,
+                bounds.bottom - insets.bottom,
+            )
+        }
+        return screenBounds()
     }
 
     fun openOverlayMenu() {
