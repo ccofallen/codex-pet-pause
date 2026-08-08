@@ -124,3 +124,31 @@ JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID
 Result: `BUILD SUCCESSFUL`; complete native unit tests passed.
 
 Implementation and test commit SHA: `f12a59c`.
+
+## Repair round 3
+
+This final timing round defines qualifying-second-gesture WAIT behavior and CANCEL consistency. A first tap whose UP is at 0ms remains pending while a qualifying second DOWN occurs at 249ms or 250ms. WAIT at 251ms and 300ms is `NoOp`; the later second UP emits `OpenMenu`. If that second gesture is CANCELed, the active second gesture is cleared and the first pending tap remains; the next WAIT after the strict deadline emits one `SingleTap`.
+
+RED evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+The first run compiled and reported 24 tests with one failure: `onWait` settled the first pending tap while a qualifying second gesture was active.
+
+GREEN evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+Result: `BUILD SUCCESSFUL`; all 24 focused tests passed.
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH npm run android:test:native
+```
+
+Result: `BUILD SUCCESSFUL`; complete native unit tests passed.
+
+Implementation and test commit SHA: `13de153`.
