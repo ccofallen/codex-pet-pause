@@ -18,6 +18,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -140,6 +141,16 @@ class PetdexActivity : AppCompatActivity() {
         WebView.setWebContentsDebuggingEnabled(false)
         webView = WebView(this)
         setContentView(webView)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
         configureServiceWorkerPolicy()
         val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         val webSocketsBlocked = documentStartSupported && runCatching {
@@ -199,11 +210,6 @@ class PetdexActivity : AppCompatActivity() {
         webView.webViewClient = WebViewClient()
         webView.destroy()
         super.onDestroy()
-    }
-
-    @Deprecated("Deprecated in Android")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 
     private fun secureWebViewClient() = object : WebViewClient() {

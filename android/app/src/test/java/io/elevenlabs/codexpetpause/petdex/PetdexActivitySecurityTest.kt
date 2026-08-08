@@ -11,6 +11,11 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class PetdexActivitySecurityTest {
     @Test
+    fun activityDoesNotDependOnTheLegacyBackCallback() {
+        assertFalse(PetdexActivity::class.java.declaredMethods.any { it.name == "onBackPressed" })
+    }
+
+    @Test
     fun requestPolicyAllowsOnlyTheExactHttpsProductionOrigin() {
         assertTrue(PetdexSecurityPolicy.isAllowedRequest("https://petdex.dev/"))
         assertTrue(PetdexSecurityPolicy.isAllowedRequest("https://petdex.dev/assets/pet.png"))
