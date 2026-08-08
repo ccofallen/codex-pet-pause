@@ -111,4 +111,90 @@ describe('createAndroidHost', () => {
     })).rejects.toThrow('invalid Android pet spritesheet');
     expect(nativeCalls).toBe(0);
   });
+
+  test('strictly parses capabilities and forwards every service command', async () => {
+    const calls: string[] = [];
+    const capabilities = {
+      apiLevel: 35,
+      overlayPermission: 'granted',
+      notificationPermission: 'denied',
+      notificationRequestAttempted: true,
+      serviceActive: true,
+      petVisible: false,
+    };
+    const plugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      getCapabilities: async () => capabilities,
+      requestNotifications: async () => { calls.push('notifications'); return capabilities; },
+      openOverlaySettings: async () => { calls.push('overlaySettings'); return capabilities; },
+      startService: async () => { calls.push('start'); return capabilities; },
+      showPet: async () => { calls.push('show'); return capabilities; },
+      hidePet: async () => { calls.push('hide'); return capabilities; },
+      quit: async () => { calls.push('quit'); return capabilities; },
+      addListener: async () => ({ remove: async () => undefined }),
+    };
+    const host = createAndroidHost(plugin);
+
+    await expect(host.getCapabilities()).resolves.toEqual(capabilities);
+    await host.requestNotifications();
+    await host.openOverlaySettings();
+    await host.startService();
+    await host.showPet();
+    await host.hidePet();
+    await host.quit();
+
+    expect(calls).toEqual(['notifications', 'overlaySettings', 'start', 'show', 'hide', 'quit']);
+  });
+
+  test('forwards strict native capability refresh events', async () => {
+    let nativeListener: ((value: unknown) => void) | undefined;
+    const capabilities = {
+      apiLevel: 28,
+      overlayPermission: 'denied',
+      notificationPermission: 'notRequired',
+      notificationRequestAttempted: true,
+      serviceActive: false,
+      petVisible: false,
+    };
+    const plugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      getCapabilities: async () => capabilities,
+      requestNotifications: async () => capabilities,
+      openOverlaySettings: async () => capabilities,
+      startService: async () => capabilities,
+      showPet: async () => capabilities,
+      hidePet: async () => capabilities,
+      quit: async () => capabilities,
+      addListener: async (eventName: string, listener: (value: unknown) => void) => {
+        if (eventName === 'capabilitiesChanged') nativeListener = listener;
+        return { remove: async () => undefined };
+      },
+    };
+    const received: unknown[] = [];
+    const unsubscribe = createAndroidHost(plugin).subscribeCapabilities((event) => received.push(event));
+
+    nativeListener?.({ capabilities });
+    await Promise.resolve();
+    unsubscribe();
+
+    expect(received).toEqual([{ type: 'capabilitiesChanged', capabilities }]);
+  });
 });

@@ -166,13 +166,13 @@ export function AndroidOverlayStage({
       {menuOpen && (
         <div className="android-overlay-menu" role="menu" data-expand={expand}>
           <button type="button" role="menuitem" onClick={() => host.postMessage({ type: 'menu-action', action: 'settings' })}>
-            {settings?.locale === 'zh-CN' ? '设置' : 'Settings'}
+            {translate(settings?.locale ?? 'en', 'android.overlayMenu.settings')}
           </button>
           <button type="button" role="menuitem" onClick={() => host.postMessage({ type: 'menu-action', action: 'hide' })}>
-            {settings?.locale === 'zh-CN' ? '隐藏' : 'Hide'}
+            {translate(settings?.locale ?? 'en', 'android.overlayMenu.hide')}
           </button>
           <button type="button" role="menuitem" onClick={() => host.postMessage({ type: 'menu-action', action: 'quit' })}>
-            {settings?.locale === 'zh-CN' ? '退出' : 'Quit'}
+            {translate(settings?.locale ?? 'en', 'android.overlayMenu.quit')}
           </button>
         </div>
       )}

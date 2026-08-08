@@ -24,11 +24,17 @@ const defaultLocale = detectPreferredLocale(navigator.languages);
 document.documentElement.lang = defaultLocale;
 document.title = translate(defaultLocale, 'document.title');
 
-function AndroidRoot({ controller }: { controller: ReturnType<typeof createAppController> }) {
+function AndroidRoot({
+  controller,
+  host,
+}: {
+  controller: ReturnType<typeof createAppController>;
+  host: ReturnType<typeof getAndroidHost>;
+}) {
   const snapshot = useAppSnapshot();
   return (
     <I18nProvider locale={snapshot.settings.locale}>
-      <ThemeProvider mode={snapshot.settings.theme}><AndroidApp /></ThemeProvider>
+      <ThemeProvider mode={snapshot.settings.theme}><AndroidApp host={host} /></ThemeProvider>
     </I18nProvider>
   );
 }
@@ -54,7 +60,7 @@ if (overlayMode) {
   root.render(
     <StrictMode>
       <AppProvider controller={controller}>
-        <AndroidRoot controller={controller} />
+        <AndroidRoot controller={controller} host={host} />
       </AppProvider>
     </StrictMode>,
   );

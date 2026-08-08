@@ -6,10 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
+import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in RESTORATION_ACTIONS) return
+        if (!AndroidServiceLifecycle.forContext(context).snapshot().recoveryAllowed) {
+            JobSchedulerReminderRecovery(context).apply {
+                cancel()
+                setRecoveryEnabled(false)
+            }
+            return
+        }
         val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
         val engine = ReminderEngine(coordinator)
         val recovery = JobSchedulerReminderRecovery(context)

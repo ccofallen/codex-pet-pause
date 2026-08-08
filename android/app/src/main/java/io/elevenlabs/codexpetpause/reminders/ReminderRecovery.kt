@@ -7,6 +7,7 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
+import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,6 +24,11 @@ internal class JobSchedulerReminderRecovery(
     private val jobs = applicationContext.getSystemService(JobScheduler::class.java)
 
     override fun schedule(triggerAtMillis: Long) {
+        if (!AndroidServiceLifecycle.forContext(applicationContext).snapshot().recoveryAllowed) {
+            cancel()
+            setRecoveryEnabled(false)
+            return
+        }
         val minimumLatency = (triggerAtMillis - clock.now()).coerceAtLeast(0L)
         val overrideDeadline = minimumLatency.saturatingAdd(MAX_RECOVERY_LATENESS_MILLIS)
         val job = JobInfo.Builder(
@@ -115,6 +121,15 @@ class ReminderRecoveryJobService : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         running = scope.launch {
+            if (!AndroidServiceLifecycle.forContext(this@ReminderRecoveryJobService)
+                    .snapshot().recoveryAllowed) {
+                JobSchedulerReminderRecovery(this@ReminderRecoveryJobService).apply {
+                    cancel()
+                    setRecoveryEnabled(false)
+                }
+                jobFinished(params, false)
+                return@launch
+            }
             val clock = SystemReminderClock
             val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
             val engine = ReminderEngine(coordinator, clock)

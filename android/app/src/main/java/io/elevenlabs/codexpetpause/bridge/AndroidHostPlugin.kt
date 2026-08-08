@@ -1,20 +1,94 @@
 package io.elevenlabs.codexpetpause.bridge
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
+import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 
-@CapacitorPlugin(name = "AndroidHost")
+private const val NOTIFICATION_PERMISSION_ALIAS = "notifications"
+private const val PERMISSION_PREFERENCES = "android-permission-onboarding"
+private const val KEY_NOTIFICATION_REQUESTED = "notificationRequested"
+
+@CapacitorPlugin(
+    name = "AndroidHost",
+    permissions = [Permission(
+        alias = NOTIFICATION_PERMISSION_ALIAS,
+        strings = [Manifest.permission.POST_NOTIFICATIONS],
+    )],
+)
 class AndroidHostPlugin : Plugin() {
     private lateinit var coordinator: AndroidStateCoordinator
+    private lateinit var lifecycle: AndroidServiceLifecycle
 
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
+        lifecycle = AndroidServiceLifecycle.forContext(context)
+        lifecycle.noteUserLaunch()
+    }
+
+    override fun handleOnResume() {
+        refreshCapabilities()
+    }
+
+    @PluginMethod
+    fun getCapabilities(call: PluginCall) = call.resolve(capabilitiesJson())
+
+    @PluginMethod
+    fun requestNotifications(call: PluginCall) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return call.resolve(capabilitiesJson())
+        }
+        permissionPreferences().edit().putBoolean(KEY_NOTIFICATION_REQUESTED, true).apply()
+        if (hasNotificationPermission()) return call.resolve(capabilitiesJson())
+        requestPermissionForAlias(
+            NOTIFICATION_PERMISSION_ALIAS,
+            call,
+            "notificationPermissionCallback",
+        )
+    }
+
+    @PermissionCallback
+    private fun notificationPermissionCallback(call: PluginCall) {
+        val capabilities = capabilitiesJson()
+        notifyCapabilities(capabilities)
+        call.resolve(capabilities)
+    }
+
+    @PluginMethod
+    fun openOverlaySettings(call: PluginCall) {
+        activity.startActivity(Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}"),
+        ))
+        call.resolve(capabilitiesJson())
+    }
+
+    @PluginMethod
+    fun startService(call: PluginCall) = sendServiceCommand(call, PetOverlayService.START)
+
+    @PluginMethod
+    fun showPet(call: PluginCall) = sendServiceCommand(call, PetOverlayService.SHOW)
+
+    @PluginMethod
+    fun hidePet(call: PluginCall) = sendServiceCommand(call, PetOverlayService.HIDE)
+
+    @PluginMethod
+    fun quit(call: PluginCall) {
+        PetOverlayService.requestQuit(context)
+        call.resolve(capabilitiesJson())
     }
 
     @PluginMethod
@@ -92,10 +166,13 @@ class AndroidHostPlugin : Plugin() {
             if (snapshot != null) {
                 notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
                 if (refreshReminderService) {
-                    ContextCompat.startForegroundService(
-                        context,
-                        Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
-                    )
+                    val state = lifecycle.snapshot()
+                    if (state.serviceActive && state.recoveryAllowed) {
+                        ContextCompat.startForegroundService(
+                            context,
+                            Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
+                        )
+                    }
                 }
             }
             call.resolve()
@@ -103,4 +180,78 @@ class AndroidHostPlugin : Plugin() {
             call.reject(message, error)
         }
     }
+
+    private fun sendServiceCommand(call: PluginCall, command: String) {
+        val permission = permissionCapabilities()
+        if ((command == PetOverlayService.START || command == PetOverlayService.SHOW)
+            && !AndroidPermissionContract.canStartService(permission)) {
+            return call.reject("overlay permission is required")
+        }
+        val state = when (command) {
+            PetOverlayService.START -> lifecycle.start()
+            PetOverlayService.SHOW -> lifecycle.show()
+            PetOverlayService.HIDE -> lifecycle.hide()
+            else -> lifecycle.snapshot()
+        }
+        if (state.serviceActive) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, PetOverlayService::class.java).setAction(command),
+            )
+        }
+        call.resolve(capabilitiesJson())
+    }
+
+    private fun refreshCapabilities() {
+        if (!Settings.canDrawOverlays(context) && lifecycle.snapshot().serviceActive) {
+            lifecycle.permissionRevoked()
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.HIDE),
+            )
+        }
+        notifyCapabilities(capabilitiesJson())
+    }
+
+    private fun notifyCapabilities(capabilities: JSObject) {
+        notifyListeners(
+            "capabilitiesChanged",
+            JSObject().put("capabilities", capabilities),
+            true,
+        )
+    }
+
+    private fun capabilitiesJson(): JSObject {
+        val permissions = permissionCapabilities()
+        val state = lifecycle.snapshot()
+        return JSObject()
+            .put("apiLevel", permissions.apiLevel)
+            .put("overlayPermission", if (permissions.overlayGranted) "granted" else "denied")
+            .put("notificationPermission", when (permissions.notificationPermission) {
+                NotificationPermission.NOT_REQUIRED -> "notRequired"
+                NotificationPermission.GRANTED -> "granted"
+                NotificationPermission.DENIED -> "denied"
+            })
+            .put(
+                "notificationRequestAttempted",
+                permissions.notificationPermission == NotificationPermission.NOT_REQUIRED
+                    || permissionPreferences().getBoolean(KEY_NOTIFICATION_REQUESTED, false),
+            )
+            .put("serviceActive", state.serviceActive && state.recoveryAllowed)
+            .put("petVisible", state.petVisible && permissions.overlayGranted)
+    }
+
+    private fun permissionCapabilities() = AndroidPermissionContract.evaluate(
+        apiLevel = Build.VERSION.SDK_INT,
+        overlayGranted = Settings.canDrawOverlays(context),
+        notificationsGranted = hasNotificationPermission(),
+    )
+
+    private fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+            || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun permissionPreferences() =
+        context.getSharedPreferences(PERMISSION_PREFERENCES, Context.MODE_PRIVATE)
 }

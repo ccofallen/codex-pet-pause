@@ -41,6 +41,53 @@
 
 [data-app-host='android'] .android-capability-status p { color: var(--color-muted); }
 
+[data-app-host='android'] .android-onboarding,
+[data-app-host='android'] .android-onboarding-step,
+[data-app-host='android'] .android-notification-retry {
+  display: grid;
+  gap: 0.7rem;
+}
+
+[data-app-host='android'] .android-onboarding {
+  margin-top: 0.35rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-border);
+}
+
+[data-app-host='android'] .android-onboarding h3 { margin: 0; font-size: 1rem; }
+
+[data-app-host='android'] .android-onboarding-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+[data-app-host='android'] .android-onboarding button {
+  min-height: 48px;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.85rem;
+  color: var(--color-text);
+  background: var(--color-surface-solid);
+  font: inherit;
+  font-weight: 700;
+}
+
+[data-app-host='android'] .android-onboarding button:last-child {
+  color: var(--color-accent-contrast);
+  background: var(--color-accent);
+}
+
+[data-app-host='android'] .android-onboarding button:disabled { cursor: wait; opacity: 0.65; }
+
+[data-app-host='android'] .android-onboarding button:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+[data-app-host='android'] .android-permission-warning,
+[data-app-host='android'] .android-background-note { font-size: 0.9rem; }
+
 [data-app-host='android'] .android-thumb-actions {
   position: fixed;
   z-index: 10;
@@ -116,4 +163,8 @@
   [data-app-host='android'] .settings-page button,
   [data-app-host='android'] .insights-panel button,
   [data-app-host='android'] .pet-library button { min-height: 48px; }
+}
+
+@media (max-width: 380px) {
+  [data-app-host='android'] .android-onboarding-actions { grid-template-columns: minmax(0, 1fr); }
 }

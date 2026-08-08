@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Codex Pet Pause</string>
+    <string name="title_activity_main">Codex Pet Pause</string>
+    <string name="overlay_notification_channel">悬浮宠物</string>
+    <string name="overlay_notification_text">宠物和提醒正在运行</string>
+    <string name="overlay_action_show">显示宠物</string>
+    <string name="overlay_action_settings">打开设置</string>
+    <string name="overlay_action_quit">退出</string>
+</resources>

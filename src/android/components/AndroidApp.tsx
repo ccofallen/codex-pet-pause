@@ -5,6 +5,7 @@ import { PetLibrary } from '../../features/pets/components/PetLibrary';
 import { Dashboard } from '../../features/reminders/components/Dashboard';
 import { SettingsPage } from '../../features/settings/SettingsPage';
 import { useI18n } from '../../i18n/I18nProvider';
+import type { AndroidControlHost } from '../bridge/androidHost';
 import { AndroidCapabilityStatus } from './AndroidCapabilityStatus';
 
 type AndroidView = 'companion' | 'reminders' | 'pet' | 'settings';
@@ -16,7 +17,7 @@ const navigation: readonly { view: AndroidView; label: 'nav.companion' | 'nav.re
   { view: 'settings', label: 'nav.settings' },
 ];
 
-export function AndroidApp() {
+export function AndroidApp({ host }: { host?: AndroidControlHost }) {
   const { t } = useI18n();
   const snapshot = useAppSnapshot();
   const [view, setView] = useState<AndroidView>('settings');
@@ -53,7 +54,7 @@ export function AndroidApp() {
   return (
     <div data-app-host="android" className="android-app-shell">
       <main id="android-main-content" className="android-scroll-content">
-        <AndroidCapabilityStatus />
+        <AndroidCapabilityStatus host={host} />
         {renderView()}
       </main>
       <div data-testid="android-thumb-actions" className="android-thumb-actions">

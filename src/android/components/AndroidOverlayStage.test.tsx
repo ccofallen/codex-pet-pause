@@ -19,6 +19,7 @@ function snapshotFor(
   if (options.customPet) settings.activePetId = 'momo';
   if (options.reminderDue) settings.reminders[0] = {
     ...settings.reminders[0]!,
+    enabled: true,
     status: 'due',
   };
   const pet = {
@@ -120,6 +121,6 @@ test('sends menu choices through the typed overlay host contract', async () => {
 test('reuses reminder presentation copy in the transparent overlay bubble', () => {
   renderOverlay({ bubbleOpen: true, reminderDue: true });
 
-  const bubble = screen.getByRole('dialog', { name: 'Look into the distance' });
+  const bubble = screen.getByRole('dialog', { name: 'Look into the distance reminder' });
   expect(bubble).toHaveTextContent('You have been looking at the screen for a while. Want to look into the distance?');
 });

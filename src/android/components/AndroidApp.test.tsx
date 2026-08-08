@@ -8,6 +8,7 @@ import { AndroidApp } from './AndroidApp';
 import { I18nProvider } from '../../i18n/I18nProvider';
 import { createFakeDependencies } from '../../test/fakes';
 import { createDefaultSettings } from '../../app/defaults';
+import type { AndroidCapabilities, AndroidControlHost } from '../bridge/androidHost';
 
 function renderAndroidApp(locale: 'zh-CN' | 'en' = 'zh-CN') {
   const controller = createAppController(createFakeDependencies({ now: 0 }));
@@ -16,6 +17,38 @@ function renderAndroidApp(locale: 'zh-CN' | 'en' = 'zh-CN') {
       <I18nProvider locale={locale}><AndroidApp /></I18nProvider>
     </AppProvider>,
   );
+}
+
+function deniedControlHost(): AndroidControlHost {
+  const capabilities: AndroidCapabilities = {
+    apiLevel: 35,
+    overlayPermission: 'denied',
+    notificationPermission: 'denied',
+    notificationRequestAttempted: true,
+    serviceActive: false,
+    petVisible: false,
+  };
+  return {
+    loadSnapshot: async () => null,
+    clearSettings: async () => undefined,
+    replaceHistory: async () => undefined,
+    clearHistory: async () => undefined,
+    clearPets: async () => undefined,
+    saveSettings: async () => undefined,
+    appendHistory: async () => undefined,
+    savePet: async () => undefined,
+    deletePet: async () => undefined,
+    selectPet: async () => undefined,
+    subscribe: () => () => undefined,
+    getCapabilities: async () => capabilities,
+    requestNotifications: async () => capabilities,
+    openOverlaySettings: async () => capabilities,
+    startService: async () => capabilities,
+    showPet: async () => capabilities,
+    hidePet: async () => capabilities,
+    quit: async () => capabilities,
+    subscribeCapabilities: () => () => undefined,
+  };
 }
 
 test('keeps the save and Petdex actions in the mobile thumb action region', async () => {
@@ -43,6 +76,18 @@ test('localizes Android navigation and capability status in English', async () =
   expect(screen.getByText('Settings and pets are stored securely on this phone.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Browse Petdex and import automatically' })).toBeVisible();
+});
+
+test('keeps settings navigation and retry available when overlay permission is refused', async () => {
+  const controller = createAppController(createFakeDependencies({ now: 0 }));
+  render(
+    <AppProvider controller={controller}>
+      <I18nProvider locale="zh-CN"><AndroidApp host={deniedControlHost()} /></I18nProvider>
+    </AppProvider>,
+  );
+
+  expect(await screen.findByRole('navigation', { name: '手机导航' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '重新授权' })).toBeVisible();
 });
 
 test('waits for native hydration before mounting settings drafts', async () => {

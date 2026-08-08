@@ -1,6 +1,7 @@
 package io.elevenlabs.codexpetpause.overlay
 
 import android.app.Notification
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -101,6 +102,7 @@ class PetOverlayService : Service() {
     private lateinit var reminderEngine: ReminderEngine
     private lateinit var reminderDelivery: ReminderDeliveryScheduler
     private lateinit var reminderNotifications: ReminderNotificationFactory
+    private lateinit var lifecycle: AndroidServiceLifecycle
     private val reminderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var webView: WebView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -127,36 +129,45 @@ class PetOverlayService : Service() {
             JobSchedulerReminderRecovery(this),
         )
         reminderNotifications = ReminderNotificationFactory(this)
+        lifecycle = AndroidServiceLifecycle.forContext(this)
         density = resources.displayMetrics.density.coerceAtLeast(1f)
         createNotificationChannel()
         reminderNotifications.ensureChannels()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action ?: START) {
-            START, SHOW -> {
-                startInForeground()
-                showOverlay()
+        val action = intent?.action
+        if (action == QUIT) {
+            startInForeground()
+            quitService()
+            return START_NOT_STICKY
+        }
+        val state = when (action) {
+            null -> lifecycle.snapshot()
+            START -> lifecycle.start()
+            SHOW, OPEN_REMINDER -> lifecycle.show()
+            HIDE -> lifecycle.hide()
+            else -> lifecycle.snapshot()
+        }
+        if (!state.serviceActive || !state.recoveryAllowed) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        startInForeground()
+        if (state.petVisible && Settings.canDrawOverlays(this)) showOverlay() else hideOverlay()
+        when (action ?: START) {
+            START, SHOW, HIDE -> {
                 reconcileReminders(openWhenDue = true)
             }
-            HIDE -> hideOverlay()
-            QUIT -> {
-                startInForeground()
-                quitService()
-            }
             STATE_CHANGED -> {
-                startInForeground()
                 refreshState()
                 reconcileReminders(openWhenDue = true)
             }
             OPEN_REMINDER -> {
-                startInForeground()
-                showOverlay()
                 reconcileReminders(openWhenDue = true)
                 openReminderBubble()
             }
             SNOOZE_CURRENT -> {
-                startInForeground()
                 reminderEngine.pendingQueue().firstOrNull()?.let { id ->
                     handleReminderTransition(reminderEngine.snooze(id, System.currentTimeMillis() + 10 * 60_000L))
                 }
@@ -193,20 +204,46 @@ class PetOverlayService : Service() {
     }
 
     private fun startInForeground() {
+        startForeground(NOTIFICATION_ID, buildForegroundNotification())
+    }
+
+    internal fun buildForegroundNotification(): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+        val showPet = PendingIntent.getForegroundService(
+            this,
+            SHOW_REQUEST,
+            Intent(this, PetOverlayService::class.java).setAction(SHOW),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val openSettings = PendingIntent.getActivity(
+            this,
+            SETTINGS_REQUEST,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val quit = PendingIntent.getForegroundService(
+            this,
+            QUIT_REQUEST,
+            Intent(this, PetOverlayService::class.java).setAction(QUIT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Pet overlay is active")
+            .setContentText(getString(R.string.overlay_notification_text))
             .setContentIntent(openApp)
             .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOnlyAlertOnce(true)
+            .addAction(Notification.Action.Builder(null, getString(R.string.overlay_action_show), showPet).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.overlay_action_settings), openSettings).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.overlay_action_quit), quit).build())
             .build()
-        startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun createNotificationChannel() {
@@ -214,7 +251,7 @@ class PetOverlayService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "Pet overlay",
+                getString(R.string.overlay_notification_channel),
                 NotificationManager.IMPORTANCE_LOW,
             ),
         )
@@ -246,10 +283,12 @@ class PetOverlayService : Service() {
     }
 
     private fun quitService() {
+        lifecycle.quit()
         reminderDelivery.cancelAll()
         reminderNotifications.cancel()
         removeAllOverlayViews()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        finishAndRemoveAppTasks(this)
         stopSelf()
     }
 
@@ -558,8 +597,28 @@ class PetOverlayService : Service() {
 
         private const val NOTIFICATION_CHANNEL_ID = "pet-overlay"
         private const val NOTIFICATION_ID = 5105
+        private const val SHOW_REQUEST = 7101
+        private const val SETTINGS_REQUEST = 7102
+        private const val QUIT_REQUEST = 7103
         private const val MENU_WIDTH_DP = 136
         private const val MENU_HEIGHT_DP = 132
         private const val SURFACE_GAP_DP = 8
+
+        fun requestQuit(context: Context) {
+            AndroidServiceLifecycle.forContext(context).quit()
+            JobSchedulerReminderRecovery(context).apply {
+                cancel()
+                setRecoveryEnabled(false)
+            }
+            ReminderNotificationFactory(context).cancel()
+            context.stopService(Intent(context, PetOverlayService::class.java))
+            finishAndRemoveAppTasks(context)
+        }
+
+        private fun finishAndRemoveAppTasks(context: Context) {
+            context.getSystemService(ActivityManager::class.java)
+                .appTasks
+                .forEach { task -> runCatching { task.finishAndRemoveTask() } }
+        }
     }
 }

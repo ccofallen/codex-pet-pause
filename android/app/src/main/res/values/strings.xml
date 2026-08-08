@@ -4,4 +4,9 @@
     <string name="title_activity_main">Codex Pet Pause</string>
     <string name="package_name">io.elevenlabs.codexpetpause</string>
     <string name="custom_url_scheme">io.elevenlabs.codexpetpause</string>
+    <string name="overlay_notification_channel">Floating pet</string>
+    <string name="overlay_notification_text">Pet and reminders are running</string>
+    <string name="overlay_action_show">Show pet</string>
+    <string name="overlay_action_settings">Open settings</string>
+    <string name="overlay_action_quit">Quit</string>
 </resources>

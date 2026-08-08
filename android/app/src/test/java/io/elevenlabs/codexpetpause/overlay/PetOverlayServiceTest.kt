@@ -4,6 +4,7 @@ import android.graphics.PixelFormat
 import android.net.Uri
 import android.view.WindowManager
 import androidx.test.core.app.ApplicationProvider
+import io.elevenlabs.codexpetpause.MainActivity
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -176,6 +178,30 @@ class PetOverlayServiceTest {
         assertEquals(
             setOf("START", "SHOW", "HIDE", "QUIT", "STATE_CHANGED"),
             PetOverlayService.COMMANDS,
+        )
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "en")
+    fun foregroundNotificationOffersShowSettingsAndQuitActions() {
+        val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
+
+        val notification = service.buildForegroundNotification()
+
+        assertEquals(listOf("Show pet", "Open settings", "Quit"), notification.actions.map { it.title.toString() })
+        assertEquals(PetOverlayService.SHOW, shadowOf(notification.actions[0].actionIntent).savedIntent.action)
+        assertEquals(MainActivity::class.java.name, shadowOf(notification.actions[1].actionIntent).savedIntent.component?.className)
+        assertEquals(PetOverlayService.QUIT, shadowOf(notification.actions[2].actionIntent).savedIntent.action)
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "zh-rCN")
+    fun foregroundNotificationActionsHaveCompleteChineseCopy() {
+        val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
+
+        assertEquals(
+            listOf("显示宠物", "打开设置", "退出"),
+            service.buildForegroundNotification().actions.map { it.title.toString() },
         )
     }
 
