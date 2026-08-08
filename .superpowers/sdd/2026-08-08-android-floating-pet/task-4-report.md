@@ -96,3 +96,31 @@ JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID
 Result: `BUILD SUCCESSFUL`; complete native unit tests passed.
 
 Implementation and test commit SHA: `7cb16fb`.
+
+## Repair round 2
+
+This round covers the two requested boundary semantics.
+
+RED evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+The first run compiled and reported 22 tests with 2 failures: the 250ms DOWN boundary was treated as expired, and CANCEL with default pointerId 0 did not clear an active pointerId 7 gesture. After the first minimal fix, CANCEL passed; the remaining failure showed that second-tap qualification was incorrectly rechecked at UP against the first UP timestamp.
+
+GREEN evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+Result: `BUILD SUCCESSFUL`; all 22 focused tests passed. The 249ms and 250ms second-tap DOWN samples remain pending and open the menu; 251ms settles the previous tap as single.
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH npm run android:test:native
+```
+
+Result: `BUILD SUCCESSFUL`; complete native unit tests passed.
+
+Implementation and test commit SHA: `f12a59c`.
