@@ -11,9 +11,12 @@ describe('selectBootstrap', () => {
     expect(selectBootstrap(undefined)).toBe('web');
   });
 
-  test('does not import the web bootstrap, PWA, browser adapters, or web CSS', () => {
+  test('uses only Android-safe adapters and the shared plus Android style entry points', () => {
     expect(androidBootstrapSource).not.toMatch(
-      /(?:main\.web|pwaStatus|rendererSettingsRepository|browserNotifications|browserAudio|historyRepository|petRepository|styles\/)/,
+      /(?:main\.web|pwaStatus|rendererSettingsRepository|browserNotifications|browserAudio|desktop\.css|window\.petShell)/,
     );
+    expect(androidBootstrapSource).toContain("import './styles/tokens.css';");
+    expect(androidBootstrapSource).toContain("import './styles/global.css';");
+    expect(androidBootstrapSource).toContain("import './styles/android.css';");
   });
 });

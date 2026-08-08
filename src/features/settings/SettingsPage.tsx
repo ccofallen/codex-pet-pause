@@ -17,6 +17,7 @@ import type { Locale } from '../../i18n/types';
 import { CustomReminderSettings } from './CustomReminderSettings';
 
 export interface SettingsPageProps {
+  formId?: string | undefined;
   section?: 'reminders' | 'general';
   now?: () => number;
 }
@@ -140,7 +141,7 @@ const notificationCopy: Record<NotificationStatus,
   unavailable: 'settings.notifications.unavailable',
 };
 
-export function SettingsPage({ section = 'general', now = systemTimestamp }: SettingsPageProps) {
+export function SettingsPage({ section = 'general', now = systemTimestamp, formId }: SettingsPageProps) {
   const { locale, t, formatTime } = useI18n();
   const controller = useAppController();
   const snapshot = useAppSnapshot();
@@ -403,7 +404,7 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
       {section === 'reminders' ? (
         <>
           <h1 id="reminders-settings-heading">{t('settings.reminders.heading')}</h1>
-          <form className="settings-form" onSubmit={(event) => void saveReminderSettings(event)} noValidate>
+          <form id={formId} className="settings-form" onSubmit={(event) => void saveReminderSettings(event)} noValidate>
             <div className="settings-grid">
               {reminderTypes.map((type) => {
                 const label = reminderLabel(type);
@@ -444,7 +445,7 @@ export function SettingsPage({ section = 'general', now = systemTimestamp }: Set
       ) : (
         <>
           <h1 id="general-settings-heading">{t('settings.general.heading')}</h1>
-          <form className="settings-form" onSubmit={(event) => void saveGeneralSettings(event)}>
+          <form id={formId} className="settings-form" onSubmit={(event) => void saveGeneralSettings(event)}>
             <fieldset className="settings-card">
               <legend>{t('settings.language')}</legend>
               {(['zh-CN', 'en'] as const).map((value) => (

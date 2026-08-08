@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAppController, useAppSnapshot } from '../../app/AppProvider';
+import { useAppSnapshot } from '../../app/AppProvider';
 import { InsightsPanel } from '../../features/insights/InsightsPanel';
 import { PetLibrary } from '../../features/pets/components/PetLibrary';
 import { Dashboard } from '../../features/reminders/components/Dashboard';
@@ -18,21 +18,24 @@ const navigation: readonly { view: AndroidView; label: 'nav.companion' | 'nav.re
 
 export function AndroidApp() {
   const { t } = useI18n();
-  const controller = useAppController();
   const snapshot = useAppSnapshot();
   const [view, setView] = useState<AndroidView>('settings');
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
 
-  const saveSettings = async (): Promise<void> => {
-    if (saveState === 'saving') return;
-    setSaveState('saving');
-    try {
-      await controller.saveSettings(snapshot.settings);
-      setSaveState('saved');
-    } catch {
-      setSaveState('failed');
-    }
-  };
+  if (!snapshot.ready) {
+    return (
+      <div data-app-host="android" className="android-app-shell">
+        <main data-testid="android-loading" className="android-scroll-content android-loading" aria-busy="true">
+          <p>{t('app.loading')}</p>
+        </main>
+      </div>
+    );
+  }
+
+  const settingsFormId = view === 'settings'
+    ? 'android-settings-form'
+    : view === 'reminders'
+      ? 'android-reminders-form'
+      : undefined;
 
   const openPetdex = (): void => {
     window.open('https://petdex.dev/', '_blank', 'noopener,noreferrer');
@@ -41,9 +44,9 @@ export function AndroidApp() {
   const renderView = () => {
     switch (view) {
       case 'companion': return <><Dashboard /><InsightsPanel /></>;
-      case 'reminders': return <SettingsPage section="reminders" />;
+      case 'reminders': return <SettingsPage section="reminders" formId="android-reminders-form" />;
       case 'pet': return <PetLibrary />;
-      case 'settings': return <SettingsPage section="general" />;
+      case 'settings': return <SettingsPage section="general" formId="android-settings-form" />;
     }
   };
 
@@ -53,17 +56,13 @@ export function AndroidApp() {
         <AndroidCapabilityStatus />
         {renderView()}
       </main>
-      <div data-testid="android-thumb-actions" className="android-thumb-actions" aria-live="polite">
-        {(view === 'settings' || view === 'reminders') && (
-          <button type="button" onClick={() => void saveSettings()} disabled={saveState === 'saving'}>
-            {saveState === 'saving' ? t('android.action.savingSettings') : t('android.action.saveSettings')}
-          </button>
+      <div data-testid="android-thumb-actions" className="android-thumb-actions">
+        {settingsFormId !== undefined && (
+          <button type="submit" form={settingsFormId}>{t('android.action.saveSettings')}</button>
         )}
         {(view === 'settings' || view === 'pet') && (
           <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
         )}
-        {saveState === 'saved' && <p role="status">{t('android.action.settingsSaved')}</p>}
-        {saveState === 'failed' && <p role="status">{t('android.action.settingsSaveFailed')}</p>}
       </div>
       <nav className="android-bottom-navigation" aria-label={t('android.navigation')}>
         {navigation.map(({ view: nextView, label }) => (

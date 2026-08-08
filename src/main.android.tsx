@@ -9,8 +9,7 @@ import {
   createAndroidPetRepository,
   createAndroidSettingsRepository,
 } from './android/infrastructure/androidRepositories';
-import { createBrowserAudio } from './infrastructure/browserAudio';
-import { createBrowserNotifications } from './infrastructure/browserNotifications';
+import { createAndroidAudio, createAndroidNotifications } from './android/infrastructure/androidPorts';
 import { I18nProvider } from './i18n/I18nProvider';
 import { detectPreferredLocale } from './i18n/locale';
 import { translate } from './i18n/messages';
@@ -26,8 +25,8 @@ const controller = createAppController({
   settings: createAndroidSettingsRepository(host),
   history: createAndroidHistoryRepository(host),
   pets: createAndroidPetRepository(host),
-  notifications: createBrowserNotifications(),
-  audio: createBrowserAudio(undefined, `${import.meta.env.BASE_URL}assets/cat/meow.wav`),
+  notifications: createAndroidNotifications(),
+  audio: createAndroidAudio(),
   defaultLocale,
 });
 
