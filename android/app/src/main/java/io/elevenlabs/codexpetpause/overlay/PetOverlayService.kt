@@ -24,7 +24,19 @@ import io.elevenlabs.codexpetpause.MainActivity
 import io.elevenlabs.codexpetpause.R
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinator
 import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
+import io.elevenlabs.codexpetpause.reminders.AlarmReminderBackup
+import io.elevenlabs.codexpetpause.reminders.CloseBubble
+import io.elevenlabs.codexpetpause.reminders.CoroutineReminderLiveTimer
+import io.elevenlabs.codexpetpause.reminders.ReminderDeliveryScheduler
+import io.elevenlabs.codexpetpause.reminders.ReminderEngine
+import io.elevenlabs.codexpetpause.reminders.ReminderNotificationFactory
+import io.elevenlabs.codexpetpause.reminders.ShowReminder
+import io.elevenlabs.codexpetpause.reminders.SystemReminderClock
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.json.JSONObject
 
 internal interface OverlayWaitScheduler {
@@ -85,6 +97,10 @@ class PetOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var coordinator: AndroidStateCoordinator
     private lateinit var mainHandler: Handler
+    private lateinit var reminderEngine: ReminderEngine
+    private lateinit var reminderDelivery: ReminderDeliveryScheduler
+    private lateinit var reminderNotifications: ReminderNotificationFactory
+    private val reminderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var webView: WebView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var dispatcher: OverlayGestureDispatcher? = null
@@ -95,14 +111,24 @@ class PetOverlayService : Service() {
     private var placementDirty = false
     private var snapshotJson: String? = null
     private var density = 1f
+    private var reminderReconciled = false
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         coordinator = AndroidStateCoordinator(AndroidStateStore(filesDir))
         mainHandler = Handler(Looper.getMainLooper())
+        reminderEngine = ReminderEngine(coordinator)
+        reminderDelivery = ReminderDeliveryScheduler(
+            reminderEngine,
+            SystemReminderClock,
+            CoroutineReminderLiveTimer(reminderScope),
+            AlarmReminderBackup(this),
+        )
+        reminderNotifications = ReminderNotificationFactory(this)
         density = resources.displayMetrics.density.coerceAtLeast(1f)
         createNotificationChannel()
+        reminderNotifications.ensureChannels()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -110,17 +136,44 @@ class PetOverlayService : Service() {
             START, SHOW -> {
                 startInForeground()
                 showOverlay()
+                reconcileReminders(openWhenDue = true)
             }
             HIDE -> hideOverlay()
-            QUIT -> quitService()
-            STATE_CHANGED -> refreshState()
+            QUIT -> {
+                startInForeground()
+                quitService()
+            }
+            STATE_CHANGED -> {
+                startInForeground()
+                refreshState()
+                reconcileReminders(openWhenDue = true)
+            }
+            REMINDER_WAKE -> {
+                startInForeground()
+                showOverlay()
+                reconcileReminders(openWhenDue = true)
+            }
+            OPEN_REMINDER -> {
+                startInForeground()
+                showOverlay()
+                reconcileReminders(openWhenDue = true)
+                openReminderBubble()
+            }
+            SNOOZE_CURRENT -> {
+                startInForeground()
+                reminderEngine.pendingQueue().firstOrNull()?.let { id ->
+                    handleReminderTransition(reminderEngine.snooze(id, System.currentTimeMillis() + 10 * 60_000L))
+                }
+            }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        reminderDelivery.stopLiveTimer()
+        reminderScope.cancel()
         removeAllOverlayViews()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -197,6 +250,8 @@ class PetOverlayService : Service() {
     }
 
     private fun quitService() {
+        reminderDelivery.cancelAll()
+        reminderNotifications.cancel()
         removeAllOverlayViews()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -338,7 +393,70 @@ class PetOverlayService : Service() {
                 OverlayMenuAction.HIDE -> hideOverlay()
                 OverlayMenuAction.QUIT -> quitService()
             }
+            is OverlayWebMessage.ReminderAction -> {
+                val transition = runCatching {
+                    when (message.action) {
+                        OverlayReminderAction.COMPLETE -> reminderEngine.complete(message.reminderId)
+                        OverlayReminderAction.SKIP -> reminderEngine.skip(message.reminderId)
+                        OverlayReminderAction.SNOOZE -> reminderEngine.snooze(
+                            message.reminderId,
+                            System.currentTimeMillis() + requireNotNull(message.snoozeMinutes) * 60_000L,
+                        )
+                    }
+                }.getOrElse {
+                    snapshotJson = coordinator.loadSnapshot()
+                    sendState()
+                    return
+                }
+                handleReminderTransition(transition)
+            }
         }
+    }
+
+    private fun reconcileReminders(openWhenDue: Boolean) {
+        val queueBefore = reminderEngine.pendingQueue()
+        val transition = runCatching { reminderEngine.reconcile() }.getOrElse {
+            reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+            return
+        }
+        val queueAfter = reminderEngine.pendingQueue()
+        snapshotJson = coordinator.loadSnapshot()
+        val shouldNotify = queueAfter.isNotEmpty() && (!reminderReconciled || queueBefore.isEmpty())
+        reminderReconciled = true
+        if (shouldNotify) {
+            snapshotJson?.let { reminderNotifications.notifyDue(it, queueAfter.first()) }
+        }
+        reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+        sendState()
+        when {
+            transition is ShowReminder && openWhenDue -> openReminderBubble()
+            transition == CloseBubble && surfaceMode == SurfaceMode.BUBBLE -> closeReminderBubble()
+        }
+    }
+
+    private fun handleReminderTransition(transition: io.elevenlabs.codexpetpause.reminders.ReminderTransition) {
+        snapshotJson = coordinator.loadSnapshot()
+        reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+        sendState()
+        when (transition) {
+            is ShowReminder -> openReminderBubble()
+            CloseBubble -> closeReminderBubble()
+        }
+    }
+
+    private fun openReminderBubble() {
+        if (reminderEngine.pendingQueue().isEmpty()) return
+        showOverlay()
+        if (webView == null) return
+        surfaceMode = SurfaceMode.BUBBLE
+        sendState()
+        sendWebEvent(JSONObject().put("type", "show-reminder"))
+    }
+
+    private fun closeReminderBubble() {
+        reminderNotifications.cancel()
+        sendWebEvent(JSONObject().put("type", "close-bubble"))
+        collapseToPet()
     }
 
     private fun collapseToPet() {
@@ -431,6 +549,9 @@ class PetOverlayService : Service() {
         const val HIDE = "HIDE"
         const val QUIT = "QUIT"
         const val STATE_CHANGED = "STATE_CHANGED"
+        const val REMINDER_WAKE = "REMINDER_WAKE"
+        const val OPEN_REMINDER = "OPEN_REMINDER"
+        const val SNOOZE_CURRENT = "SNOOZE_CURRENT"
         val COMMANDS: Set<String> = setOf(START, SHOW, HIDE, QUIT, STATE_CHANGED)
 
         private const val NOTIFICATION_CHANNEL_ID = "pet-overlay"

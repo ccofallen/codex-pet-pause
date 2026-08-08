@@ -24,10 +24,21 @@ enum class OverlayMenuAction {
     QUIT,
 }
 
+enum class OverlayReminderAction {
+    COMPLETE,
+    SNOOZE,
+    SKIP,
+}
+
 sealed interface OverlayWebMessage {
     data object Ready : OverlayWebMessage
     data class MenuAction(val action: OverlayMenuAction) : OverlayWebMessage
     data class BubbleSizeChanged(val widthDp: Int, val heightDp: Int) : OverlayWebMessage
+    data class ReminderAction(
+        val reminderId: String,
+        val action: OverlayReminderAction,
+        val snoozeMinutes: Int? = null,
+    ) : OverlayWebMessage
 }
 
 internal class OverlayJavascriptBridge(private val onMessage: (OverlayWebMessage) -> Unit) {
@@ -55,6 +66,20 @@ internal class OverlayJavascriptBridge(private val onMessage: (OverlayWebMessage
                     return null
                 }
                 OverlayWebMessage.BubbleSizeChanged(width.toInt(), height.toInt())
+            }
+            "reminder-action" -> {
+                val reminderId = message.optString("reminderId")
+                if (reminderId.isBlank() || reminderId.length > 64) return null
+                when (message.optString("action")) {
+                    "complete" -> OverlayWebMessage.ReminderAction(reminderId, OverlayReminderAction.COMPLETE)
+                    "skip" -> OverlayWebMessage.ReminderAction(reminderId, OverlayReminderAction.SKIP)
+                    "snooze" -> {
+                        val minutes = message.optInt("snoozeMinutes", -1)
+                        if (minutes !in setOf(5, 10, 15)) return null
+                        OverlayWebMessage.ReminderAction(reminderId, OverlayReminderAction.SNOOZE, minutes)
+                    }
+                    else -> return null
+                }
             }
             else -> null
         }

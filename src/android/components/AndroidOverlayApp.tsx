@@ -13,6 +13,8 @@ interface NativeOverlayBridge {
 type NativeOverlayMessage =
   | { type: 'state-changed'; snapshot: unknown }
   | { type: 'pet-tap' }
+  | { type: 'show-reminder' }
+  | { type: 'close-bubble' }
   | { type: 'open-menu'; side: 'left' | 'right' }
   | { type: 'placement-changed'; side: 'left' | 'right' };
 
@@ -26,7 +28,7 @@ function isNativeOverlayMessage(value: unknown): value is NativeOverlayMessage {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false;
   const message = value as Record<string, unknown>;
   if (message.type === 'state-changed') return 'snapshot' in message;
-  if (message.type === 'pet-tap') return true;
+  if (message.type === 'pet-tap' || message.type === 'show-reminder' || message.type === 'close-bubble') return true;
   return (message.type === 'open-menu' || message.type === 'placement-changed')
     && (message.side === 'left' || message.side === 'right');
 }
@@ -48,10 +50,24 @@ export function AndroidOverlayApp() {
       if (!isNativeOverlayMessage(value)) return;
       if (value.type === 'state-changed') {
         try {
-          setSnapshot(parseAndroidHostSnapshot(value.snapshot));
+          const next = parseAndroidHostSnapshot(value.snapshot);
+          setSnapshot(next);
+          if (next?.settingsJson !== null && next !== null) {
+            const settings = JSON.parse(next.settingsJson) as { reminders?: Array<{ status?: string }> };
+            if (!settings.reminders?.some(({ status }) => status === 'due')) setBubbleOpen(false);
+          }
         } catch {
           setSnapshot(null);
         }
+        return;
+      }
+      if (value.type === 'show-reminder') {
+        setMenuOpen(false);
+        setBubbleOpen(true);
+        return;
+      }
+      if (value.type === 'close-bubble') {
+        setBubbleOpen(false);
         return;
       }
       if (value.type === 'pet-tap') {

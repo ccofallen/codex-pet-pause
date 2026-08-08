@@ -1,10 +1,13 @@
 package io.elevenlabs.codexpetpause.bridge
 
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 
 @CapacitorPlugin(name = "AndroidHost")
 class AndroidHostPlugin : Plugin() {
@@ -26,11 +29,12 @@ class AndroidHostPlugin : Plugin() {
     @PluginMethod
     fun saveSettings(call: PluginCall) {
         val settings = call.getString("json") ?: return call.reject("settings JSON is required")
-        complete(call, "invalid settings JSON") { coordinator.saveSettings(settings) }
+        complete(call, "invalid settings JSON", refreshReminderService = true) { coordinator.saveSettings(settings) }
     }
 
     @PluginMethod
-    fun clearSettings(call: PluginCall) = complete(call, "could not clear settings", coordinator::clearSettings)
+    fun clearSettings(call: PluginCall) =
+        complete(call, "could not clear settings", refreshReminderService = true, coordinator::clearSettings)
 
     @PluginMethod
     fun appendHistory(call: PluginCall) {
@@ -50,7 +54,8 @@ class AndroidHostPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun clearHistory(call: PluginCall) = complete(call, "could not clear history", coordinator::clearHistory)
+    fun clearHistory(call: PluginCall) =
+        complete(call, "could not clear history", mutation = coordinator::clearHistory)
 
     @PluginMethod
     fun savePet(call: PluginCall) {
@@ -67,7 +72,8 @@ class AndroidHostPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun clearPets(call: PluginCall) = complete(call, "could not clear pets", coordinator::clearPets)
+    fun clearPets(call: PluginCall) =
+        complete(call, "could not clear pets", mutation = coordinator::clearPets)
 
     @PluginMethod
     fun selectPet(call: PluginCall) {
@@ -75,10 +81,23 @@ class AndroidHostPlugin : Plugin() {
         complete(call, "could not select pet") { coordinator.selectPet(id) }
     }
 
-    private fun complete(call: PluginCall, message: String, mutation: () -> String?) {
+    private fun complete(
+        call: PluginCall,
+        message: String,
+        refreshReminderService: Boolean = false,
+        mutation: () -> String?,
+    ) {
         try {
             val snapshot = mutation()
-            if (snapshot != null) notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
+            if (snapshot != null) {
+                notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
+                if (refreshReminderService) {
+                    ContextCompat.startForegroundService(
+                        context,
+                        Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
+                    )
+                }
+            }
             call.resolve()
         } catch (error: Exception) {
             call.reject(message, error)

@@ -30,6 +30,15 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     }
 
     @Synchronized
+    fun commitReminderAction(settingsJson: String, eventJson: String): String {
+        AndroidStateValidator.validateSettings(settingsJson)
+        AndroidStateValidator.validateActivityEvent(eventJson)
+        val next = snapshot().put("settingsJson", settingsJson)
+        next.getJSONArray("historyJson").put(eventJson)
+        return persist(next)
+    }
+
+    @Synchronized
     fun replaceHistory(historyJson: List<String>): String {
         historyJson.forEach(AndroidStateValidator::validateActivityEvent)
         return persist(snapshot().put("historyJson", JSONArray(historyJson)))

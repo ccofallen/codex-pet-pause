@@ -77,8 +77,10 @@
 }
 
 .android-overlay-reminder {
-  width: min(232px, calc(100vw - var(--android-pet-size) - 8px));
-  padding: 13px 15px;
+  width: 208px;
+  max-width: 208px;
+  padding: 12px;
+  overflow: visible;
   font: 600 14px/1.35 "Avenir Next", "Trebuchet MS", sans-serif;
 }
 
@@ -91,4 +93,46 @@
 .android-overlay-reminder p {
   margin-top: 5px;
   color: #665746;
+}
+
+.android-reminder-progress {
+  font-size: 12px;
+}
+
+.android-reminder-primary-actions,
+.android-reminder-snooze-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.android-reminder-action-card {
+  margin-top: 8px;
+}
+
+.android-reminder-primary-actions button,
+.android-reminder-snooze-actions button,
+.android-reminder-action-card button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 9px;
+  color: #2c241c;
+  background: #f0dfc4;
+  font: 700 11px/1.15 "Avenir Next", "Trebuchet MS", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.android-reminder-action-card button {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.android-reminder-primary-actions button:disabled,
+.android-reminder-snooze-actions button:disabled,
+.android-reminder-action-card button:disabled {
+  opacity: 0.58;
 }
