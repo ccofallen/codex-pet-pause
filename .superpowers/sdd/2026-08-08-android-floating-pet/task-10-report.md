@@ -232,16 +232,20 @@ publisher, and publication logic that could clobber an already-public release.
 - The active plan and Task 10 brief now consistently require one universal pure-JVM/WebView
   APK with no ABI splits or `abiFilters`; arm64 is a compatible device architecture, not an
   APK restriction.
+- `test:android-release` now invokes `verify-release-coordination.test.mjs` explicitly, and
+  the safety suite asserts that this wiring remains present so CI cannot silently omit the
+  four coordinated-publication contracts.
 
 ### Second-review bounded verification
 
 | Gate | Result |
 | --- | --- |
 | Initial focused coordination contracts | RED, 0/4 for the expected missing protections |
+| Follow-up npm gate-wiring contract | RED, 27 passed and 1 failed for the expected omitted suite |
 | Focused coordination plus release safety | PASS, 14/14 |
 | Desktop workflow contracts | PASS, 28/28 |
 | Combined Android, desktop, safety, and coordination contracts | PASS, 59/59 |
-| Android release contracts | PASS, 27/27 |
+| Wired Android release gate | PASS, 32/32 |
 | Release tag contracts | PASS, 3/3 |
 | Desktop release artifact contracts | PASS, 17/17 |
 | Pinned actionlint 1.7.12 on all three workflows | PASS |

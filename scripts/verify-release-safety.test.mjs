@@ -223,3 +223,13 @@ test('active plan, spec, brief, and install notes contain no arm64-only release 
     /android-arm64|app-arm64-v8a|arm64-v8a|arm64[- ]only|builds only[^\n]*arm64|仅构建[^\n]*arm64|仅支持[^\n]*arm64/iu,
   );
 });
+
+test('npm Android release gate includes the coordinated publication contracts', async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  assert.match(
+    packageJson.scripts['test:android-release'],
+    /scripts\/verify-release-coordination\.test\.mjs/u,
+  );
+});
