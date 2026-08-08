@@ -140,11 +140,35 @@ class PetOverlayServiceTest {
 
         dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
         dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
-        dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 250))
+        dispatcher.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 249))
         scheduler.runScheduled()
         dispatcher.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301))
 
         assertEquals(listOf(OpenMenu), results)
+    }
+
+    @Test
+    fun scheduledWaitAndBoundaryDownProduceSingleTapInEitherCallbackOrder() {
+        val waitFirstScheduler = RecordingWaitScheduler()
+        val waitFirstResults = mutableListOf<OverlayGestureResult>()
+        val waitFirst = OverlayGestureDispatcher(interpreter(), waitFirstScheduler, waitFirstResults::add)
+        waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
+        waitFirstScheduler.runScheduled()
+        waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS))
+        waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS + 16))
+
+        val downFirstScheduler = RecordingWaitScheduler()
+        val downFirstResults = mutableListOf<OverlayGestureResult>()
+        val downFirst = OverlayGestureDispatcher(interpreter(), downFirstScheduler, downFirstResults::add)
+        downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
+        downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS))
+        downFirstScheduler.runScheduled()
+        downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS + 16))
+
+        assertEquals(listOf(SingleTap), waitFirstResults)
+        assertEquals(listOf(SingleTap), downFirstResults)
     }
 
     @Test

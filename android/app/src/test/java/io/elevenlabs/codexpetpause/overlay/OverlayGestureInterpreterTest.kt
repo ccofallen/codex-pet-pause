@@ -156,7 +156,7 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
-    fun doubleTapWindowTreats249And250AsDoubleTapAnd251AsSingleTap() {
+    fun doubleTapWindowTreats249AsDoubleTapAnd250AsExpired() {
         val at249 = interpreter()
         tap(at249, x = 200f, y = 340f, atMs = 0)
         assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 265)))
@@ -164,8 +164,8 @@ class OverlayGestureInterpreterTest {
 
         val at250 = interpreter()
         tap(at250, x = 200f, y = 340f, atMs = 0)
-        assertEquals(NoOp, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 266)))
-        assertEquals(OpenMenu, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 282)))
+        assertEquals(SingleTap, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 266)))
+        assertEquals(NoOp, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 282)))
 
         val at251 = interpreter()
         tap(at251, x = 200f, y = 340f, atMs = 0)
@@ -174,7 +174,7 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
-    fun waitDoesNotSettlePendingTapWhileSecondGestureQualifies() {
+    fun waitDoesNotSettlePendingTapWhileSecondGestureIsInsideTheHalfOpenWindow() {
         val at249 = interpreter()
         tapAtZero(at249)
         assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 249)))
@@ -182,22 +182,50 @@ class OverlayGestureInterpreterTest {
         assertEquals(NoOp, at249.consume(MotionEventSample.wait(atMs = 300)))
         assertEquals(OpenMenu, at249.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301)))
 
-        val at250 = interpreter()
-        tapAtZero(at250)
-        assertEquals(NoOp, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 250)))
-        assertEquals(NoOp, at250.consume(MotionEventSample.wait(atMs = 251)))
-        assertEquals(NoOp, at250.consume(MotionEventSample.wait(atMs = 300)))
-        assertEquals(OpenMenu, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301)))
+    }
+
+    @Test
+    fun exactBoundarySettlesTheFirstTapRegardlessOfWaitAndDownOrdering() {
+        val waitFirst = interpreter()
+        tapAtZero(waitFirst)
+        assertEquals(SingleTap, waitFirst.consume(MotionEventSample.wait(atMs = DOUBLE_TAP_WINDOW_MS)))
+        assertEquals(NoOp, waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS)))
+        assertEquals(NoOp, waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 266)))
+
+        val downFirst = interpreter()
+        tapAtZero(downFirst)
+        assertEquals(
+            SingleTap,
+            downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS)),
+        )
+        assertEquals(NoOp, downFirst.consume(MotionEventSample.wait(atMs = DOUBLE_TAP_WINDOW_MS)))
+        assertEquals(NoOp, downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 266)))
+    }
+
+    @Test
+    fun immediatelyBelowBoundaryAllowsSecondTapRegardlessOfWaitAndDownOrdering() {
+        val inside = DOUBLE_TAP_WINDOW_MS - 1
+        val waitFirst = interpreter()
+        tapAtZero(waitFirst)
+        assertEquals(NoOp, waitFirst.consume(MotionEventSample.wait(atMs = inside)))
+        assertEquals(NoOp, waitFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = inside)))
+        assertEquals(OpenMenu, waitFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = inside + 16)))
+
+        val downFirst = interpreter()
+        tapAtZero(downFirst)
+        assertEquals(NoOp, downFirst.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = inside)))
+        assertEquals(NoOp, downFirst.consume(MotionEventSample.wait(atMs = inside)))
+        assertEquals(OpenMenu, downFirst.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = inside + 16)))
     }
 
     @Test
     fun cancellingQualifyingSecondGestureLeavesFirstTapForNextWaitToSettle() {
         val interpreter = interpreter()
         tapAtZero(interpreter)
-        interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 250))
+        interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = DOUBLE_TAP_WINDOW_MS - 1))
 
-        assertEquals(NoOp, interpreter.consume(MotionEventSample(MotionAction.CANCEL, eventTimeMs = 250)))
-        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = 251)))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample(MotionAction.CANCEL, eventTimeMs = DOUBLE_TAP_WINDOW_MS - 1)))
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = DOUBLE_TAP_WINDOW_MS)))
         assertEquals(NoOp, interpreter.consume(MotionEventSample.wait(atMs = 300)))
     }
 

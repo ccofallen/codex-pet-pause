@@ -85,8 +85,8 @@ class OverlayGestureInterpreter(
         if (activeGesture != null) return OverlayGestureResult.NoOp
         val pendingTap = pendingTapUpAtMs
         val elapsedSincePending = pendingTap?.let { sample.eventTimeMs - it }
-        val expiredPendingTap = elapsedSincePending != null && elapsedSincePending > doubleTapWindowMs
-        val isSecondTap = elapsedSincePending != null && elapsedSincePending in 0..doubleTapWindowMs
+        val expiredPendingTap = elapsedSincePending != null && elapsedSincePending >= doubleTapWindowMs
+        val isSecondTap = elapsedSincePending != null && elapsedSincePending in 0L until doubleTapWindowMs
         if (expiredPendingTap) pendingTapUpAtMs = null
         activeGesture = ActiveGesture(
             pointerId = sample.pointerId,

@@ -9,7 +9,7 @@ GREEN. The transparent Android system overlay, local WebView renderer, Task4 tou
 - Added `PetOverlayService` with `START`, `SHOW`, `HIDE`, `QUIT`, and `STATE_CHANGED` commands.
 - Uses `TYPE_APPLICATION_OVERLAY`, `PixelFormat.TRANSLUCENT`, and `FLAG_NOT_FOCUSABLE`; every window update uses explicit pet, menu, or reminder dimensions and never `MATCH_PARENT`.
 - Maps real `MotionEvent` input to Task4 `MotionEventSample` and delegates all gesture state to `OverlayGestureInterpreter`.
-- Schedules single-tap `WAIT` at the shared Task4 250 ms boundary. A qualifying second gesture retains Task4's pending tap behavior, including a second down exactly at 250 ms.
+- Schedules single-tap `WAIT` at the shared Task4 250 ms boundary. The second-tap interval is half-open: elapsed time below 250 ms qualifies, while elapsed time at or above 250 ms settles the first tap.
 - Persists normalized placement through the Task2 `AndroidStateCoordinator` and mirrors it into both overlay state and settings pet position.
 - Added `OverlayWebViewFactory` with narrow `WebViewAssetLoader` handlers for packaged `assets/public/` resources and immutable internal pet spritesheets.
 - Allows only `https://appassets.androidplatform.net/app/` and validated `/pet-assets/pets/<id>/<revision>/spritesheet.webp` paths, disables file/content and network loads, returns blocking responses for remote subresources, rejects remote navigation, and exposes one `postMessage` JavaScript method with a closed typed parser.
@@ -47,7 +47,7 @@ RED was observed before production implementation:
 
 - Corrected the overlay entry URL to `/app/index.html?overlay=1`, backed only by packaged `assets/public/`, and added a renderer test proving the mounted overlay emits `overlay-ready`.
 - Replaced the whole-`filesDir` handler with an immutable spritesheet-only handler. `state.json`, metadata, malformed paths, file/content URLs, and remote HTTP(S) subresources are blocked.
-- Added a shared `DOUBLE_TAP_WINDOW_MS = 250L` source of truth. The interpreter settles an unclaimed tap at the exact boundary, while a second gesture that starts at the boundary still qualifies.
+- Added a shared `DOUBLE_TAP_WINDOW_MS = 250L` source of truth. The interpreter and service dispatcher both use the half-open `[0, 250 ms)` second-tap interval, so a callback and DOWN at exactly 250 ms produce the same single-tap result in either processing order.
 - Removed the `WindowManager.LayoutParams` title assignment.
 
 Review-fix RED evidence:
@@ -69,3 +69,21 @@ Review-fix GREEN evidence:
   - PASS: Gradle `BUILD SUCCESSFUL`.
 
 The remaining review-specific risk is real-device WebView behavior: resource isolation and response blocking are covered by Robolectric, but device instrumentation was not run.
+
+## Timing Race Follow-up
+
+The exact-boundary race now has an explicit half-open contract:
+
+- A second DOWN with elapsed time `0 <= elapsed < DOUBLE_TAP_WINDOW_MS` may complete a double tap.
+- A WAIT or second DOWN with `elapsed >= DOUBLE_TAP_WINDOW_MS` settles the first tap.
+- `DOUBLE_TAP_WINDOW_MS` remains the only timing source; there is no 251 ms workaround.
+
+Timing RED evidence:
+
+- Focused native tests ran 29 tests and failed 3 new assertions under the former inclusive second-DOWN behavior.
+- The failures covered direct interpreter boundary handling and service callback-first versus DOWN-first ordering.
+
+Timing GREEN evidence:
+
+- Focused `PetOverlayServiceTest` and `OverlayGestureInterpreterTest`: PASS, 29 tests, Gradle `BUILD SUCCESSFUL`.
+- Full `npm run android:test:native`: PASS, Gradle `BUILD SUCCESSFUL`.
