@@ -80,7 +80,9 @@ function extractQuotedValue(text, name) {
 }
 
 async function inspectApkWithAndroidSdk(apkPath) {
-  const apksigner = await findBuildTool('apksigner');
+  const apksigner =
+    process.env.ANDROID_APKSIGNER?.trim() ||
+    (await findBuildTool('apksigner'));
   const aapt2 = await findBuildTool('aapt2');
   const unzip = process.platform === 'win32' ? 'unzip' : '/usr/bin/unzip';
 
