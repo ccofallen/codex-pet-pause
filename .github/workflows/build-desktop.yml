@@ -84,9 +84,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: node scripts/verify-release-tag.mjs "$RELEASE_TAG"
+      - run: node scripts/verify-release-tag.mjs "${{ inputs.release_tag }}"
       - run: ${{ matrix.command }}
       - run: npm run desktop:smoke:packaged-app
       - run: node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}
@@ -107,9 +105,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
-      - env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: node scripts/verify-release-tag.mjs "$RELEASE_TAG"
+      - run: node scripts/verify-release-tag.mjs "${{ inputs.release_tag }}"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: desktop-*

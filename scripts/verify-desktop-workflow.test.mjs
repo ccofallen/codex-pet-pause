@@ -11,6 +11,7 @@ const actionlintRun = 'docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /wor
 const tagPushCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')";
 const playwrightInstallRun = 'npx playwright install --with-deps chromium';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
+const coordinatedTagVersionRun = 'node scripts/verify-release-tag.mjs "${{ inputs.release_tag }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
 const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
 
@@ -324,6 +325,19 @@ test('rejects POSIX-only release-tag expansion in Windows-capable jobs', () => {
   const failures = verifyDesktopWorkflow(invalid);
   assert.ok(failures.some((failure) => failure.includes('portable tag expression before packaging')));
   assert.ok(failures.some((failure) => failure.includes('portable tag expression before publishing')));
+});
+
+test('rejects POSIX-only coordinated tag expansion in the Windows package job', async () => {
+  const invalid = parse(await readFile('.github/workflows/build-desktop.yml', 'utf8'));
+  for (const jobName of ['package', 'release']) {
+    const tagStep = invalid.jobs[jobName].steps.find(
+      (step) => step.run === coordinatedTagVersionRun,
+    );
+    tagStep.run = 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"';
+    tagStep.env = { RELEASE_TAG: '${{ inputs.release_tag }}' };
+  }
+  const failures = verifyDesktopWorkflow(invalid);
+  assert.ok(failures.some((failure) => failure.includes('portable input expression')));
 });
 
 test('rejects packaging without an actual packaged-app smoke after the native build', () => {
