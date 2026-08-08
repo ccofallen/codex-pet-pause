@@ -7,23 +7,30 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.SafeBrowsingResponse
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import io.elevenlabs.codexpetpause.MainActivity
 import io.elevenlabs.codexpetpause.R
+import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,7 +46,25 @@ internal object PetdexSecurityPolicy {
         "application/octet-stream",
     )
 
-    fun isAllowedPage(url: String): Boolean = isAllowedOrigin(url)
+    val webSocketBlockScript = """
+        (() => {
+          'use strict';
+          const blocked = (name) => class {
+            constructor() { throw new DOMException(name + ' is disabled', 'SecurityError'); }
+          };
+          for (const name of ['WebSocket', 'WebSocketStream', 'WebTransport']) {
+            Object.defineProperty(globalThis, name, {
+              value: blocked(name), writable: false, configurable: false, enumerable: false
+            });
+          }
+        })();
+    """.trimIndent()
+
+    fun shouldEnableJavaScript(documentStartScriptSupported: Boolean): Boolean =
+        documentStartScriptSupported
+
+    fun isAllowedPage(url: String): Boolean = isAllowedRequest(url)
+    fun isAllowedRequest(url: String): Boolean = isAllowedOrigin(url)
 
     fun isAllowedDownload(url: String, mimeType: String, suggestedName: String): Boolean {
         val mime = mimeType.substringBefore(';').trim().lowercase(Locale.ROOT)
@@ -53,41 +78,72 @@ internal object PetdexSecurityPolicy {
 
     fun isAllowedOrigin(url: String): Boolean = runCatching {
         val uri = URI(url)
-        uri.scheme.equals("https", ignoreCase = true)
-            && uri.host.equals(HOST, ignoreCase = true)
+        uri.scheme == "https"
+            && uri.host == HOST
             && uri.userInfo == null
             && (uri.port == -1 || uri.port == 443)
     }.getOrDefault(false)
 }
 
+internal object PetdexRestorePolicy {
+    fun restoreOrLoad(
+        savedState: Bundle?,
+        restore: (Bundle) -> Boolean,
+        loadInitial: () -> Unit,
+    ): Boolean {
+        val restored = savedState?.let(restore) == true
+        if (!restored) loadInitial()
+        return restored
+    }
+}
+
 class PetdexActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var store: PendingPetArchiveStore
+    private var serviceWorkerController: ServiceWorkerController? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val downloadInProgress = AtomicBoolean(false)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = getString(R.string.petdex_title)
         store = PendingPetArchiveStore(cacheDir)
+        WebView.setWebContentsDebuggingEnabled(false)
         webView = WebView(this)
         setContentView(webView)
+        val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        val webSocketsBlocked = documentStartSupported && runCatching {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                PetdexSecurityPolicy.webSocketBlockScript,
+                setOf(PETDEX_ORIGIN),
+            )
+        }.isSuccess
         webView.settings.apply {
-            javaScriptEnabled = true
+            javaScriptEnabled = PetdexSecurityPolicy.shouldEnableJavaScript(webSocketsBlocked)
+            javaScriptCanOpenWindowsAutomatically = false
+            setSupportMultipleWindows(false)
             domStorageEnabled = true
+            databaseEnabled = false
             allowFileAccess = false
             allowContentAccess = false
             allowFileAccessFromFileURLs = false
             allowUniversalAccessFromFileURLs = false
+            blockNetworkImage = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            cacheMode = WebSettings.LOAD_NO_CACHE
             setGeolocationEnabled(false)
             mediaPlaybackRequiresUserGesture = true
+            safeBrowsingEnabled = true
         }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
         webView.removeJavascriptInterface("searchBoxJavaBridge_")
         webView.removeJavascriptInterface("accessibility")
         webView.removeJavascriptInterface("accessibilityTraversal")
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = secureWebViewClient()
+        configureServiceWorkerPolicy()
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
             if (!PetdexSecurityPolicy.isAllowedDownload(url, mimeType.orEmpty(), name)) {
@@ -96,11 +152,21 @@ class PetdexActivity : AppCompatActivity() {
             }
             download(url, userAgent.orEmpty(), name)
         }
-        if (savedInstanceState == null) webView.loadUrl(PETDEX_URL)
+        PetdexRestorePolicy.restoreOrLoad(
+            savedState = savedInstanceState,
+            restore = { webView.restoreState(it)?.size?.let { size -> size > 0 } == true },
+            loadInitial = { webView.loadUrl(PETDEX_URL) },
+        )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        webView.saveState(outState)
     }
 
     override fun onDestroy() {
         scope.cancel()
+        serviceWorkerController?.setServiceWorkerClient(denyAllServiceWorkerClient())
         webView.stopLoading()
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
@@ -115,8 +181,8 @@ class PetdexActivity : AppCompatActivity() {
 
     private fun secureWebViewClient() = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (!request.isForMainFrame || PetdexSecurityPolicy.isAllowedPage(request.url.toString())) return false
-            showError(R.string.petdex_navigation_rejected)
+            if (PetdexSecurityPolicy.isAllowedPage(request.url.toString())) return false
+            if (request.isForMainFrame) showError(R.string.petdex_navigation_rejected)
             return true
         }
 
@@ -126,6 +192,15 @@ class PetdexActivity : AppCompatActivity() {
             showError(R.string.petdex_navigation_rejected)
             return true
         }
+
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest,
+        ): WebResourceResponse? = interceptRequest(request.url.toString())
+
+        @Deprecated("Deprecated in Android")
+        override fun shouldInterceptRequest(view: WebView, url: String): WebResourceResponse? =
+            interceptRequest(url)
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
             handler.cancel()
@@ -146,7 +221,44 @@ class PetdexActivity : AppCompatActivity() {
         }
     }
 
+    private fun configureServiceWorkerPolicy() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        serviceWorkerController = ServiceWorkerController.getInstance().also { controller ->
+            controller.serviceWorkerWebSettings.apply {
+                allowContentAccess = false
+                allowFileAccess = false
+                blockNetworkLoads = false
+                cacheMode = WebSettings.LOAD_NO_CACHE
+            }
+            controller.setServiceWorkerClient(object : ServiceWorkerClient() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+                    interceptRequest(request.url.toString())
+            })
+        }
+    }
+
+    private fun denyAllServiceWorkerClient() = object : ServiceWorkerClient() {
+        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
+            blockedResponse()
+    }
+
+    private fun interceptRequest(url: String): WebResourceResponse? =
+        if (PetdexSecurityPolicy.isAllowedRequest(url)) null else blockedResponse()
+
+    private fun blockedResponse() = WebResourceResponse(
+        "text/plain",
+        "UTF-8",
+        403,
+        "Forbidden",
+        mapOf("Cache-Control" to "no-store"),
+        ByteArrayInputStream(ByteArray(0)),
+    )
+
     private fun download(url: String, userAgent: String, suggestedName: String) {
+        if (!downloadInProgress.compareAndSet(false, true)) {
+            showError(R.string.petdex_download_failed)
+            return
+        }
         scope.launch {
             try {
                 withContext(Dispatchers.IO) { downloadToPrivateStore(url, userAgent, suggestedName) }
@@ -156,6 +268,8 @@ class PetdexActivity : AppCompatActivity() {
                 ))
             } catch (_: Exception) {
                 showError(R.string.petdex_download_failed)
+            } finally {
+                downloadInProgress.set(false)
             }
         }
     }
@@ -210,7 +324,8 @@ class PetdexActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val PETDEX_URL = "https://petdex.dev/"
+        private const val PETDEX_ORIGIN = "https://petdex.dev"
+        private const val PETDEX_URL = "$PETDEX_ORIGIN/"
         private const val MAX_REDIRECTS = 3
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000

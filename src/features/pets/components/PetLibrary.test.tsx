@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { readFileSync } from 'node:fs';
@@ -85,6 +86,7 @@ function fakeAndroidImport(overrides: Partial<AndroidPetImport> = {}): AndroidPe
     openPetdex: async () => undefined,
     pickFiles: async () => [],
     consumePendingArchive: async () => zipFile,
+    completePendingArchive: async () => undefined,
     persistValidatedPet: async () => undefined,
     subscribe: () => () => undefined,
     ...overrides,
@@ -189,6 +191,87 @@ test('opens the Android security preview as soon as a Petdex download completes'
 
   expect(consumePendingArchive).toHaveBeenCalledWith('download-1');
   expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toHaveTextContent('Murk');
+});
+
+test('keeps a claimed Petdex archive until preview cancellation explicitly advances the queue', async () => {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'download-1' }));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  expect(completePendingArchive).not.toHaveBeenCalled();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).toHaveBeenCalledWith('download-1', 'cancelled');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('acknowledges rejected Petdex validation and retries a failed native claim without deletion', async () => {
+  let rejectedListener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const rejectedCompletion = vi.fn(async () => undefined);
+  await renderLibrary({
+    extractArchive: async () => { throw new Error('invalid archive'); },
+    androidImport: fakeAndroidImport({
+      completePendingArchive: rejectedCompletion,
+      subscribe: (listener) => {
+        rejectedListener = listener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => rejectedListener?.({ type: 'pet-archive-ready', token: 'bad-download' }));
+  await waitFor(() => expect(rejectedCompletion).toHaveBeenCalledWith('bad-download', 'rejected'));
+
+  cleanup();
+  let retryListener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const retryCompletion = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      consumePendingArchive: async () => { throw new Error('temporary read failure'); },
+      completePendingArchive: retryCompletion,
+      subscribe: (listener) => {
+        retryListener = listener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => retryListener?.({ type: 'pet-archive-ready', token: 'retry-download' }));
+  await waitFor(() => expect(retryCompletion).toHaveBeenCalledWith('retry-download', 'retry'));
+  expect(screen.getByRole('alert')).toHaveTextContent('无法从 Petdex 获取这个宠物，请重试');
+});
+
+test('closes a Petdex preview after committed activation and acknowledges it as imported', async () => {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const persistValidatedPet = vi.fn(async () => undefined);
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      persistValidatedPet,
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'download-1' }));
+  await screen.findByRole('dialog', { name: '宠物安全预览' });
+
+  await userEvent.setup().click(screen.getByRole('button', { name: '保存并使用这个宠物' }));
+
+  expect(persistValidatedPet).toHaveBeenCalledWith(MURK_TEST_PET);
+  expect(completePendingArchive).toHaveBeenCalledWith('download-1', 'imported');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('当前宠物已切换');
 });
 
 test('places Android manual import below Petdex with equal full-width actions', async () => {

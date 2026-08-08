@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import androidx.core.content.ContextCompat
 import com.getcapacitor.JSArray
@@ -23,6 +24,8 @@ import com.getcapacitor.annotation.PermissionCallback
 import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
+import io.elevenlabs.codexpetpause.petdex.PendingArchiveOutcome
+import io.elevenlabs.codexpetpause.petdex.PendingPetImportQueue
 import io.elevenlabs.codexpetpause.petdex.PetdexActivity
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -44,13 +47,12 @@ open class AndroidHostPlugin : Plugin() {
     private lateinit var coordinator: AndroidStateCoordinator
     private lateinit var lifecycle: AndroidServiceLifecycle
     private lateinit var hostLifecycle: AndroidHostLifecycle
-    private lateinit var pendingArchives: PendingPetArchiveStore
-    private val announcedArchiveTokens = mutableSetOf<String>()
+    private lateinit var pendingArchiveQueue: PendingPetImportQueue
 
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
         lifecycle = AndroidServiceLifecycle.forContext(context)
-        pendingArchives = PendingPetArchiveStore(context.cacheDir)
+        pendingArchiveQueue = PendingPetImportQueue(PendingPetArchiveStore(context.cacheDir))
         installResumeBoundary(
             serviceLifecycle = lifecycle,
             canDrawOverlay = { Settings.canDrawOverlays(context) },
@@ -63,12 +65,12 @@ open class AndroidHostPlugin : Plugin() {
             capabilitiesChanged = { notifyCapabilities(capabilitiesJson()) },
         )
         hostLifecycle.onUserLaunch()
-        announcePendingArchives()
+        announceNextPendingArchive()
     }
 
     override fun handleOnResume() {
         hostLifecycle.onResume()
-        if (::pendingArchives.isInitialized) announcePendingArchives()
+        if (::pendingArchiveQueue.isInitialized) announceNextPendingArchive()
     }
 
     @PluginMethod
@@ -123,16 +125,27 @@ open class AndroidHostPlugin : Plugin() {
     fun consumePendingArchive(call: PluginCall) {
         val token = call.getString("token") ?: return call.reject("pending archive token is required")
         try {
-            val archive = pendingArchives.consume(token)
-            announcedArchiveTokens.remove(token)
+            val archive = pendingArchiveQueue.claim(token)
             call.resolve(nativeFileJson(
                 archive.name,
                 "application/zip",
                 archive.bytes,
             ))
         } catch (error: Exception) {
-            announcedArchiveTokens.remove(token)
-            call.reject("could not consume pending pet archive", error)
+            call.reject("could not claim pending pet archive", error)
+        }
+    }
+
+    @PluginMethod
+    fun completePendingArchive(call: PluginCall) {
+        val token = call.getString("token") ?: return call.reject("pending archive token is required")
+        val outcome = call.getString("outcome") ?: return call.reject("pending archive outcome is required")
+        try {
+            val next = pendingArchiveQueue.finish(token, PendingArchiveOutcome.fromWire(outcome))
+            call.resolve()
+            if (next != null) announcePendingArchive(next)
+        } catch (error: Exception) {
+            call.reject("could not complete pending pet archive", error)
         }
     }
 
@@ -309,11 +322,13 @@ open class AndroidHostPlugin : Plugin() {
         refreshReminderService: Boolean = false,
         mutation: () -> String?,
     ) {
-        try {
-            val snapshot = mutation()
-            if (snapshot != null) {
-                notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
-                if (refreshReminderService) {
+        val result = try {
+            AndroidCommittedMutationEffects.run(
+                mutation = mutation,
+                emitSnapshot = { snapshot ->
+                    notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
+                },
+                refreshOverlay = if (refreshReminderService) ({
                     val state = lifecycle.snapshot()
                     if (state.serviceActive && state.recoveryAllowed) {
                         ContextCompat.startForegroundService(
@@ -321,12 +336,14 @@ open class AndroidHostPlugin : Plugin() {
                             Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
                         )
                     }
-                }
-            }
-            call.resolve()
+                }) else null,
+            )
         } catch (error: Exception) {
-            call.reject(message, error)
+            return call.reject(message, error)
         }
+        result.eventWarning?.let { Log.w(TAG, "Committed state event could not be published", it) }
+        result.refreshWarning?.let { Log.w(TAG, "Committed state overlay refresh will retry later", it) }
+        call.resolve(JSObject().put("refreshWarning", result.refreshWarning != null))
     }
 
     private fun sendServiceCommand(call: PluginCall, command: String) {
@@ -361,12 +378,12 @@ open class AndroidHostPlugin : Plugin() {
         )
     }
 
-    private fun announcePendingArchives() {
-        pendingArchives.pendingTokens().forEach { token ->
-            if (announcedArchiveTokens.add(token)) {
-                notifyListeners("petArchiveReady", JSObject().put("token", token), true)
-            }
-        }
+    private fun announceNextPendingArchive() {
+        pendingArchiveQueue.nextAnnouncement()?.let(::announcePendingArchive)
+    }
+
+    private fun announcePendingArchive(token: String) {
+        notifyListeners("petArchiveReady", JSObject().put("token", token), true)
     }
 
     private fun readSelectedFile(uri: Uri): JSObject {
@@ -477,4 +494,8 @@ open class AndroidHostPlugin : Plugin() {
 
     private fun permissionPreferences() =
         context.getSharedPreferences(PERMISSION_PREFERENCES, Context.MODE_PRIVATE)
+
+    companion object {
+        private const val TAG = "AndroidHostPlugin"
+    }
 }

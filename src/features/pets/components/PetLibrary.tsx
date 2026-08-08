@@ -125,6 +125,7 @@ export function PetLibrary({
   const importHelpButtonRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const importRequestRef = useRef(0);
+  const pendingArchiveTokenRef = useRef<string | undefined>(undefined);
   const importHelpId = useId();
   const importHeadingId = useId();
   const [preview, setPreview] = useState<StoredCodexPet>();
@@ -162,7 +163,14 @@ export function PetLibrary({
   const closePreview = (): void => {
     if (pending) return;
     importRequestRef.current += 1;
+    const pendingArchiveToken = pendingArchiveTokenRef.current;
+    pendingArchiveTokenRef.current = undefined;
     setPreview(undefined);
+    if (pendingArchiveToken !== undefined && androidImport !== undefined) {
+      void androidImport.completePendingArchive(pendingArchiveToken, 'cancelled').catch(() => {
+        setError({ kind: 'petdex-download' });
+      });
+    }
     queueMicrotask(() => importTriggerRef.current?.focus());
   };
 
@@ -172,7 +180,9 @@ export function PetLibrary({
     queueMicrotask(() => deleteTriggerRef.current?.focus());
   };
 
-  const processFiles = useCallback(async (files: File[]): Promise<void> => {
+  const processFiles = useCallback(async (
+    files: File[],
+  ): Promise<'preview' | 'rejected' | 'stale'> => {
     const request = importRequestRef.current + 1;
     importRequestRef.current = request;
     setError(undefined);
@@ -193,51 +203,65 @@ export function PetLibrary({
           throw new PetImportError('archive-selection-multiple');
         }
         ({ manifestFile, spritesheetFile } = await extractArchive(archives[0]!));
-        if (request !== importRequestRef.current) return;
+        if (request !== importRequestRef.current) return 'stale';
       } else {
         if (manifests.length + atlases.length !== files.length) {
           setError({ kind: 'selection-unsupported' });
-          return;
+          return 'rejected';
         }
         if (manifests.length === 0 || atlases.length === 0) {
           setError({ kind: 'selection-incomplete' });
-          return;
+          return 'rejected';
         }
         if (manifests.length !== 1 || atlases.length !== 1) {
           setError({ kind: 'selection-duplicate' });
-          return;
+          return 'rejected';
         }
         manifestFile = manifests[0]!;
         spritesheetFile = atlases[0]!;
       }
 
       const imported = await parseImport(manifestFile!, spritesheetFile!, now());
-      if (request !== importRequestRef.current) return;
+      if (request !== importRequestRef.current) return 'stale';
       if (imported.id === BUILTIN_PET_ID) {
         setError({ kind: 'import', code: 'reserved-id', details: {} });
-        return;
+        return 'rejected';
       }
       setPreview(imported);
+      return 'preview';
     } catch (reason) {
-      if (request !== importRequestRef.current) return;
+      if (request !== importRequestRef.current) return 'stale';
       setError(reason instanceof PetImportError
         ? { kind: 'import', code: reason.code, details: reason.details }
         : { kind: 'import-generic' });
+      return 'rejected';
     }
   }, [extractArchive, now, parseImport]);
 
   useEffect(() => {
     if (androidImport !== undefined) {
       return androidImport.subscribe(({ token }) => {
-        const request = importRequestRef.current + 1;
-        importRequestRef.current = request;
+        pendingArchiveTokenRef.current = token;
         setError(undefined);
         setMessage(undefined);
-        void androidImport.consumePendingArchive(token).then((archive) => {
-          if (request === importRequestRef.current) void processFiles([archive]);
-        }).catch(() => {
-          if (request === importRequestRef.current) setError({ kind: 'petdex-download' });
-        });
+        void (async () => {
+          let archive: File;
+          try {
+            archive = await androidImport.consumePendingArchive(token);
+          } catch {
+            setError({ kind: 'petdex-download' });
+            pendingArchiveTokenRef.current = undefined;
+            await androidImport.completePendingArchive(token, 'retry').catch(() => undefined);
+            return;
+          }
+          const result = await processFiles([archive]);
+          if (result === 'preview') return;
+          pendingArchiveTokenRef.current = undefined;
+          await androidImport.completePendingArchive(
+            token,
+            result === 'rejected' ? 'rejected' : 'retry',
+          ).catch(() => undefined);
+        })();
       });
     }
     return window.petShell?.onPetdexImport?.((event) => {
@@ -299,11 +323,20 @@ export function PetLibrary({
           : { ...preview, importedAt: existing.importedAt });
       }
       const displayName = preview.displayName;
+      const pendingArchiveToken = pendingArchiveTokenRef.current;
+      pendingArchiveTokenRef.current = undefined;
       setPreview(undefined);
       setMessage(androidImport === undefined
         ? { kind: 'saved', name: displayName }
         : { kind: 'selected' });
       queueMicrotask(() => importTriggerRef.current?.focus());
+      if (pendingArchiveToken !== undefined && androidImport !== undefined) {
+        try {
+          await androidImport.completePendingArchive(pendingArchiveToken, 'imported');
+        } catch (reason) {
+          console.warn('Committed Android pet archive acknowledgement will retry later', reason);
+        }
+      }
     } catch {
       setError({ kind: 'save' });
     } finally {

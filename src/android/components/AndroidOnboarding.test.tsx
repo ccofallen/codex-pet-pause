@@ -42,6 +42,7 @@ function controlHost(initial: AndroidCapabilities) {
     openPetdex: async () => undefined,
     pickPetFiles: async () => ({ status: 'cancelled', files: [] }),
     consumePendingArchive: async () => { throw new Error('no pending archive'); },
+    completePendingArchive: async () => undefined,
     persistValidatedPet: async () => undefined,
     subscribePetArchives: () => () => undefined,
     subscribe: () => () => undefined,

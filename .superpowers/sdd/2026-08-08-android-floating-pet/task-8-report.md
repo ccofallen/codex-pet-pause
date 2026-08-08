@@ -127,3 +127,90 @@ The first `./gradlew assembleDebug` reached dexing and exposed stale generated C
 - No `dist-android/` content was modified.
 - No generated Gradle file was modified.
 - Capacitor was not synced or regenerated.
+
+## Review fixes
+
+### Petdex request and process isolation
+
+- Petdex remains a non-exported activity and now runs in the dedicated `:petdex` process, isolating its process-global WebView service-worker policy from the privileged main and overlay WebViews.
+- Main-frame, iframe, image, fetch/XHR, redirect, and other WebView resource requests use one exact-origin request gate. The service-worker client uses the same gate.
+- The only allowed remote origin is exactly `https://petdex.dev` on the default HTTPS port. No additional static origin was required. Non-HTTPS URLs, credentials, alternate ports, wildcard/suffix lookalikes, localhost, direct loopback/link-local/RFC1918 addresses, and file/content/data/blob URLs are rejected.
+- Download redirects are checked at every hop and retain the exact origin, MIME, name, signature, timeout, and byte-limit checks.
+- `WebSocket`, `WebSocketStream`, and `WebTransport` are replaced with immutable throwing constructors by an AndroidX document-start script before page scripts execute. If document-start injection is unsupported or fails, JavaScript remains disabled, so the remote page cannot fall back to arbitrary WebSocket or local-network JavaScript connections.
+- Only one Petdex download can run at a time; additional download attempts are rejected rather than queued without bound.
+
+### Pet path parity
+
+- TypeScript asset-path validation now accepts the same dotted pet IDs as the shared importer and native state validator.
+- Canonical path shape remains exactly `pets/<id>/<32-hex-revision>/spritesheet.webp`.
+- Empty and dot segments, traversal, encoded separators, spaces, alternate filenames, and unsafe characters remain rejected by parity tests in TypeScript and Kotlin.
+
+### Bounded pending storage and recoverable FIFO queue
+
+- Pre-validation storage defaults to 32 MiB per archive, 64 MiB aggregate, at most four pending archives, and a 24-hour TTL.
+- Store-wide synchronization makes file-count and aggregate quota checks atomic across concurrent store instances in the process.
+- Startup and subsequent access remove expired archives, invalid private-directory entries, and interrupted `.tmp` files.
+- Publication timestamps preserve FIFO order independently of random handoff tokens.
+- Native reads are now non-destructive claims. Archives are deleted only after explicit `imported`, `cancelled`, or `rejected` completion; `retry` releases the claim without deletion.
+- Native announces and permits only the FIFO head. The TypeScript adapter suppresses duplicates and does not deliver the next token until the active token completes.
+- Process death or unsubscribe before preview releases or reconstructs the claim from the still-present archive. Validation errors, user cancellation, activation success, temporary claim errors, and acknowledgement failures have explicit outcomes.
+
+### Activation and restore consistency
+
+- Immutable asset/state commit remains the only save-failure boundary.
+- Snapshot publication and live overlay refresh occur after commit. Their failures are logged as recoverable warnings and cannot reject an already committed activation.
+- The native result exposes `refreshWarning`; the Android preview still closes and reports success after commit.
+- Petdex saves WebView state and restores it on recreation. A non-null but empty/failed restore loads the initial production URL instead of leaving a blank surface.
+
+## Review TDD and validation evidence
+
+### Red
+
+The first focused TypeScript run preserved 57 passing tests while six new review tests failed for the intended missing behavior:
+
+- Dotted immutable asset paths were rejected by `overlayProtocol`.
+- Native archive events were delivered concurrently and duplicated.
+- No explicit cancel, reject, retry, or imported acknowledgement existed.
+
+The first focused native run failed compilation only on the newly specified claim/ack, quota/TTL, queue, request-policy, restore-policy, and post-commit effect APIs.
+
+### Focused green
+
+`npm run test:run -- src/android/domain/overlayProtocol.task8Review.test.ts src/android/infrastructure/androidPetImport.test.ts src/android/bridge/androidHost.test.ts src/features/pets/components/PetLibrary.test.tsx`
+
+- 4 test files passed.
+- 72 tests passed.
+
+`./gradlew testDebugUnitTest --tests '*PendingPetArchiveStoreTest' --tests '*PetdexActivitySecurityTest' --tests '*AndroidPetPathParityTest' --tests '*AndroidCommittedMutationEffectsTest'`
+
+- Passed with `BUILD SUCCESSFUL in 31s`.
+- Production and test Kotlin compiled successfully.
+
+### Full bounded validation
+
+All commands used the documented JDK/Android SDK environment and hard timeouts of at most five minutes. No command timed out or remained running.
+
+`npm run typecheck`
+
+- Passed.
+
+`npm run test:run`
+
+- 65 test files passed.
+- 787 tests passed.
+
+`npm run test:electron`
+
+- 3 test files passed.
+- 10 tests passed.
+
+`./gradlew testDebugUnitTest`
+
+- Passed with `BUILD SUCCESSFUL in 6s`.
+
+`./gradlew assembleDebug`
+
+- Passed with `BUILD SUCCESSFUL in 628ms`.
+- 95 actionable tasks: 3 executed, 92 up-to-date.
+
+No Capacitor sync/regeneration or generated web build was run. The existing device/emulator interaction gap remains unchanged.

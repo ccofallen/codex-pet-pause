@@ -3,6 +3,7 @@ import type {
   AndroidNativePetFile,
   AndroidPetArchiveEvent,
   AndroidPetImportHost,
+  AndroidPendingArchiveOutcome,
   AndroidPetWrite,
 } from '../bridge/androidHost';
 import { readAndroidBlobBytes } from './androidRepositories';
@@ -13,6 +14,7 @@ export interface AndroidPetImport {
   openPetdex(): Promise<void>;
   pickFiles(): Promise<File[]>;
   consumePendingArchive(token: string): Promise<File>;
+  completePendingArchive(token: string, outcome: AndroidPendingArchiveOutcome): Promise<void>;
   persistValidatedPet(pet: StoredCodexPet): Promise<void>;
   subscribe(listener: (event: AndroidPetImportEvent) => void): () => void;
 }
@@ -34,6 +36,19 @@ function encodeBase64(bytes: Uint8Array): string {
 }
 
 export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetImport {
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  let activeToken: string | undefined;
+  const queuedTokens: string[] = [];
+  const knownTokens = new Set<string>();
+
+  const deliverNext = (): void => {
+    if (listener === undefined || activeToken !== undefined) return;
+    const token = queuedTokens.shift();
+    if (token === undefined) return;
+    activeToken = token;
+    listener({ type: 'pet-archive-ready', token });
+  };
+
   return {
     openPetdex: () => host.openPetdex(),
 
@@ -44,6 +59,19 @@ export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetIm
 
     async consumePendingArchive(token: string): Promise<File> {
       return nativeFile(await host.consumePendingArchive(token));
+    },
+
+    async completePendingArchive(token, outcome): Promise<void> {
+      if (activeToken !== token) throw new Error('Android pending archive is not active');
+      await host.completePendingArchive(token, outcome);
+      activeToken = undefined;
+      if (outcome === 'retry') {
+        queuedTokens.length = 0;
+        knownTokens.clear();
+        return;
+      }
+      knownTokens.delete(token);
+      deliverNext();
     },
 
     async persistValidatedPet(pet: StoredCodexPet): Promise<void> {
@@ -58,6 +86,24 @@ export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetIm
       await host.persistValidatedPet(input);
     },
 
-    subscribe: (listener) => host.subscribePetArchives(listener),
+    subscribe(nextListener): () => void {
+      if (listener !== undefined) throw new Error('Android pending archive listener already installed');
+      listener = nextListener;
+      const unsubscribe = host.subscribePetArchives((event) => {
+        if (knownTokens.has(event.token)) return;
+        knownTokens.add(event.token);
+        queuedTokens.push(event.token);
+        deliverNext();
+      });
+      return () => {
+        const token = activeToken;
+        listener = undefined;
+        activeToken = undefined;
+        queuedTokens.length = 0;
+        knownTokens.clear();
+        unsubscribe();
+        if (token !== undefined) void host.completePendingArchive(token, 'retry').catch(() => undefined);
+      };
+    },
   };
 }

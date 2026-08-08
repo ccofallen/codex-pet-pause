@@ -20,6 +20,7 @@ function importHost(overrides: Partial<AndroidPetImportHost> = {}): AndroidPetIm
     openPetdex: async () => undefined,
     pickPetFiles: async () => ({ status: 'cancelled', files: [] }),
     consumePendingArchive: async () => nativeFile('pet.zip', 'application/zip', 'UEsDBA=='),
+    completePendingArchive: async () => undefined,
     persistValidatedPet: async () => undefined,
     subscribePetArchives: () => () => undefined,
     ...overrides,
@@ -108,4 +109,45 @@ test('forwards immediate native archive-ready events and unsubscribes cleanly', 
 
   expect(received).toEqual([{ type: 'pet-archive-ready', token: 'download-1' }]);
   expect(remove).toHaveBeenCalledOnce();
+});
+
+test('serializes duplicate native announcements until the active claim is explicitly finished', async () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  const petImport = createAndroidPetImport(importHost({
+    completePendingArchive,
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return () => undefined;
+    },
+  }));
+  const received: string[] = [];
+  petImport.subscribe(({ token }) => received.push(token));
+
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-1' });
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-1' });
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-2' });
+  expect(received).toEqual(['download-1']);
+
+  await petImport.completePendingArchive('download-1', 'cancelled');
+  expect(completePendingArchive).toHaveBeenCalledWith('download-1', 'cancelled');
+  expect(received).toEqual(['download-1', 'download-2']);
+});
+
+test('retry keeps later native announcements blocked behind the recoverable first archive', async () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  const petImport = createAndroidPetImport(importHost({
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return () => undefined;
+    },
+  }));
+  const received: string[] = [];
+  petImport.subscribe(({ token }) => received.push(token));
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-1' });
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-2' });
+
+  await petImport.completePendingArchive('download-1', 'retry');
+
+  expect(received).toEqual(['download-1']);
 });

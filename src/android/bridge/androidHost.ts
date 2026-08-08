@@ -34,6 +34,8 @@ export interface AndroidPetArchiveEvent {
   token: string;
 }
 
+export type AndroidPendingArchiveOutcome = 'imported' | 'cancelled' | 'rejected' | 'retry';
+
 export interface AndroidHostEvent {
   type: 'stateChanged';
   snapshot: AndroidHostSnapshot;
@@ -78,6 +80,7 @@ export interface AndroidPetImportHost {
   openPetdex(): Promise<void>;
   pickPetFiles(): Promise<AndroidPetFileSelection>;
   consumePendingArchive(token: string): Promise<AndroidNativePetFile>;
+  completePendingArchive(token: string, outcome: AndroidPendingArchiveOutcome): Promise<void>;
   persistValidatedPet(input: AndroidPetWrite): Promise<void>;
   subscribePetArchives(listener: (event: AndroidPetArchiveEvent) => void): () => void;
 }
@@ -116,6 +119,10 @@ export interface AndroidHostPlugin {
   openPetdex?(): Promise<void>;
   pickPetFiles?(): Promise<unknown>;
   consumePendingArchive?(options: { token: string }): Promise<unknown>;
+  completePendingArchive?(options: {
+    token: string;
+    outcome: AndroidPendingArchiveOutcome;
+  }): Promise<void>;
   persistValidatedPet?(options: AndroidPetWrite): Promise<void>;
   addListener(
     eventName: 'stateChanged' | 'capabilitiesChanged' | 'petArchiveReady',
@@ -262,6 +269,17 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
       const file = parseNativePetFile(await plugin.consumePendingArchive({ token }));
       if (file.mimeType !== 'application/zip') throw new Error('invalid Android pending archive');
       return file;
+    },
+
+    async completePendingArchive(token, outcome): Promise<void> {
+      requireArchiveToken(token);
+      if (!['imported', 'cancelled', 'rejected', 'retry'].includes(outcome)) {
+        throw new Error('invalid Android pending archive outcome');
+      }
+      if (plugin.completePendingArchive === undefined) {
+        throw new Error('Android host method unavailable: completePendingArchive');
+      }
+      await plugin.completePendingArchive({ token, outcome });
     },
 
     async persistValidatedPet(input: AndroidPetWrite): Promise<void> {
