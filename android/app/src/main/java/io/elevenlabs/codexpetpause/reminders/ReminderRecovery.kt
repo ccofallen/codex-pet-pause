@@ -127,23 +127,36 @@ internal class ReminderRecoveryDispatcher(
 class ReminderRecoveryJobService : JobService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var running: Job? = null
+    internal var beforeFinalRecoveryGuard: () -> Unit = {}
+    internal var reconcileAction: () -> Unit = { reconcileReminders() }
+    internal var recoveryFinished: () -> Unit = {}
 
     override fun onStartJob(params: JobParameters): Boolean {
         if (ReminderRecoveryEntryPoint(this).suppressAfterQuit()) return false
         running = scope.launch {
-            val clock = SystemReminderClock
-            val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
-            val engine = ReminderEngine(coordinator, clock)
-            val recovery = JobSchedulerReminderRecovery(this@ReminderRecoveryJobService, clock)
-            ReminderRecoveryDispatcher(
-                engine,
-                clock,
-                ReminderNotificationFactory(this@ReminderRecoveryJobService),
-                recovery,
-            ).recover()
-            jobFinished(params, false)
+            try {
+                beforeFinalRecoveryGuard()
+                AndroidServiceLifecycle.forContext(this@ReminderRecoveryJobService)
+                    .runRecoveryIfAllowed(reconcileAction)
+            } finally {
+                recoveryFinished()
+                jobFinished(params, false)
+            }
         }
         return true
+    }
+
+    private fun reconcileReminders() {
+        val clock = SystemReminderClock
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
+        val engine = ReminderEngine(coordinator, clock)
+        val recovery = JobSchedulerReminderRecovery(this, clock)
+        ReminderRecoveryDispatcher(
+            engine,
+            clock,
+            ReminderNotificationFactory(this),
+            recovery,
+        ).recover()
     }
 
     override fun onStopJob(params: JobParameters): Boolean {

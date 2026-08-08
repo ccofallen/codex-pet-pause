@@ -14,7 +14,8 @@ class AndroidPermissionContractTest {
                 apiLevel = 32,
                 overlayGranted = false,
                 notificationsGranted = false,
-                notificationRequested = false,
+                notificationPromptCount = 0,
+                notificationDenialCount = 0,
                 shouldShowRationale = false,
             )
                 .notificationPermission,
@@ -25,7 +26,8 @@ class AndroidPermissionContractTest {
                 apiLevel = 33,
                 overlayGranted = false,
                 notificationsGranted = false,
-                notificationRequested = false,
+                notificationPromptCount = 0,
+                notificationDenialCount = 0,
                 shouldShowRationale = false,
             )
                 .notificationPermission,
@@ -33,18 +35,22 @@ class AndroidPermissionContractTest {
     }
 
     @Test
-    fun distinguishesAskableAndBlockedNotificationDenials() {
+    fun requiresRepeatedNonRequestableDenialBeforeBlocking() {
         assertEquals(
             NotificationPermission.DENIED_CAN_ASK,
-            AndroidPermissionContract.evaluate(35, true, false, true, true).notificationPermission,
+            AndroidPermissionContract.evaluate(35, true, false, 1, 0, false).notificationPermission,
+        )
+        assertEquals(
+            NotificationPermission.DENIED_CAN_ASK,
+            AndroidPermissionContract.evaluate(35, true, false, 2, 1, true).notificationPermission,
         )
         assertEquals(
             NotificationPermission.BLOCKED,
-            AndroidPermissionContract.evaluate(35, true, false, true, false).notificationPermission,
+            AndroidPermissionContract.evaluate(35, true, false, 2, 2, false).notificationPermission,
         )
         assertEquals(
             NotificationPermission.GRANTED,
-            AndroidPermissionContract.evaluate(35, true, true, true, false).notificationPermission,
+            AndroidPermissionContract.evaluate(35, true, true, 2, 2, false).notificationPermission,
         )
     }
 
@@ -54,14 +60,16 @@ class AndroidPermissionContractTest {
             apiLevel = 35,
             overlayGranted = true,
             notificationsGranted = false,
-            notificationRequested = true,
+            notificationPromptCount = 2,
+            notificationDenialCount = 2,
             shouldShowRationale = false,
         )
         val overlayDenied = AndroidPermissionContract.evaluate(
             apiLevel = 35,
             overlayGranted = false,
             notificationsGranted = true,
-            notificationRequested = true,
+            notificationPromptCount = 2,
+            notificationDenialCount = 2,
             shouldShowRationale = false,
         )
 

@@ -1,6 +1,6 @@
 package io.elevenlabs.codexpetpause.bridge
 
-internal enum class NotificationPermission {
+enum class NotificationPermission {
     NOT_REQUIRED,
     NOT_REQUESTED,
     DENIED_CAN_ASK,
@@ -8,28 +8,29 @@ internal enum class NotificationPermission {
     GRANTED,
 }
 
-internal data class AndroidPermissionCapabilities(
+data class AndroidPermissionCapabilities(
     val apiLevel: Int,
     val overlayGranted: Boolean,
     val notificationPermission: NotificationPermission,
 )
 
-internal object AndroidPermissionContract {
+object AndroidPermissionContract {
     fun evaluate(
         apiLevel: Int,
         overlayGranted: Boolean,
         notificationsGranted: Boolean,
-        notificationRequested: Boolean,
+        notificationPromptCount: Int,
+        notificationDenialCount: Int,
         shouldShowRationale: Boolean,
-    ) = AndroidPermissionCapabilities(
+    ): AndroidPermissionCapabilities = AndroidPermissionCapabilities(
         apiLevel = apiLevel,
         overlayGranted = overlayGranted,
         notificationPermission = when {
             apiLevel < 33 -> NotificationPermission.NOT_REQUIRED
             notificationsGranted -> NotificationPermission.GRANTED
-            !notificationRequested -> NotificationPermission.NOT_REQUESTED
-            shouldShowRationale -> NotificationPermission.DENIED_CAN_ASK
-            else -> NotificationPermission.BLOCKED
+            notificationPromptCount <= 0 -> NotificationPermission.NOT_REQUESTED
+            notificationDenialCount >= 2 && !shouldShowRationale -> NotificationPermission.BLOCKED
+            else -> NotificationPermission.DENIED_CAN_ASK
         },
     )
 

@@ -156,3 +156,33 @@ GREEN:
 - Bounded `assembleDebug`: `BUILD SUCCESSFUL` in 735ms; 95 tasks, 3 executed and 92 up-to-date. No timeout was required.
 
 The review-fix commit SHA is reported in the final handoff because this report is included in that commit.
+
+## Remaining Review Findings Follow-up (2026-08-08)
+
+Follow-up base: `096d3481e165732a723851f207b0ec79e3df601e`
+
+### Corrections
+
+- Made the persisted Quit latch single-writer: only `quit()` writes `quitRequested=true`, only `noteUserLaunch()` writes `quitRequested=false`, and operational start/show/hide/permission-revoked commits update only active/visible fields.
+- Added deterministic concurrent tests using separate lifecycle wrappers and real threads. Each stale operational writer is paused before its preference commit, Quit commits through another wrapper/thread, and the stale commit is then released without clearing Quit.
+- Added a process-wide recovery transaction shared by `quit()` and the final recovery guard. The job rechecks Quit immediately before entering reconciliation and holds the guard through reconcile, notification publication, and recovery scheduling, so either recovery finishes before Quit cancellation or Quit commits first and recovery performs no side effects.
+- Added a controlled real `ReminderRecoveryJobService` barrier race: the job starts and pauses, Quit commits, recovery resumes, and the reconcile/publish action remains suppressed.
+- Replaced the notification `requested` boolean with persisted prompt-count and denial-evidence history. A first dismissal remains retryable, a first denial remains retryable, repeated dismissal remains retryable, a repeated non-requestable denial routes to settings, and grant resets both counters.
+- Added a real `AndroidHostPlugin.handleOnResume()` test that drives the protected plugin callback through the production resume boundary and verifies refreshed capabilities reach the event callback without mutating Quit.
+
+### Strict TDD evidence
+
+RED:
+
+- Initial focused native run failed at test compilation because the single-writer lifecycle behavior, guarded recovery hooks, denial-history contract, and real plugin resume boundary did not exist.
+- A second focused notification-history RED run failed at test compilation after adding dismissal-versus-denial cases because prompt count, rationale-aware history, and the expanded permission contract were not yet implemented.
+
+GREEN:
+
+- Focused lifecycle concurrency, recovery race, notification history/contract, and plugin resume tests: `BUILD SUCCESSFUL` in 4s.
+- Full Vitest suite: 63 files and 759 tests passed in 8.90s.
+- TypeScript typecheck: passed in approximately 5s.
+- Complete native unit/Robolectric suite: `BUILD SUCCESSFUL` in 7s.
+- Bounded `assembleDebug`: `BUILD SUCCESSFUL` in 622ms; 95 tasks, 3 executed and 92 up-to-date. No timeout was required.
+
+The follow-up commit SHA is reported in the final handoff because this report is included in that commit.

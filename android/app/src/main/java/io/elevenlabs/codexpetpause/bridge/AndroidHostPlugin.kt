@@ -20,7 +20,6 @@ import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 
 private const val NOTIFICATION_PERMISSION_ALIAS = "notifications"
 private const val PERMISSION_PREFERENCES = "android-permission-onboarding"
-private const val KEY_NOTIFICATION_REQUESTED = "notificationRequested"
 
 @CapacitorPlugin(
     name = "AndroidHost",
@@ -29,7 +28,7 @@ private const val KEY_NOTIFICATION_REQUESTED = "notificationRequested"
         strings = [Manifest.permission.POST_NOTIFICATIONS],
     )],
 )
-class AndroidHostPlugin : Plugin() {
+open class AndroidHostPlugin : Plugin() {
     private lateinit var coordinator: AndroidStateCoordinator
     private lateinit var lifecycle: AndroidServiceLifecycle
     private lateinit var hostLifecycle: AndroidHostLifecycle
@@ -37,7 +36,7 @@ class AndroidHostPlugin : Plugin() {
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
         lifecycle = AndroidServiceLifecycle.forContext(context)
-        hostLifecycle = AndroidHostLifecycle(
+        installResumeBoundary(
             serviceLifecycle = lifecycle,
             canDrawOverlay = { Settings.canDrawOverlays(context) },
             hideOverlay = {
@@ -55,6 +54,35 @@ class AndroidHostPlugin : Plugin() {
         hostLifecycle.onResume()
     }
 
+    private fun installResumeBoundary(
+        serviceLifecycle: AndroidServiceLifecycle,
+        canDrawOverlay: () -> Boolean,
+        hideOverlay: () -> Unit,
+        capabilitiesChanged: () -> Unit,
+    ) {
+        hostLifecycle = AndroidHostLifecycle(
+            serviceLifecycle = serviceLifecycle,
+            canDrawOverlay = canDrawOverlay,
+            hideOverlay = hideOverlay,
+            capabilitiesChanged = capabilitiesChanged,
+        )
+    }
+
+    internal fun installResumeBoundaryForTest(
+        serviceLifecycle: AndroidServiceLifecycle,
+        canDrawOverlay: () -> Boolean,
+        hideOverlay: () -> Unit,
+        capabilitiesProvider: () -> AndroidPermissionCapabilities,
+        capabilitiesEvent: (AndroidPermissionCapabilities) -> Unit,
+    ) {
+        installResumeBoundary(
+            serviceLifecycle = serviceLifecycle,
+            canDrawOverlay = canDrawOverlay,
+            hideOverlay = hideOverlay,
+            capabilitiesChanged = { capabilitiesEvent(capabilitiesProvider()) },
+        )
+    }
+
     @PluginMethod
     fun getCapabilities(call: PluginCall) = call.resolve(capabilitiesJson())
 
@@ -67,7 +95,6 @@ class AndroidHostPlugin : Plugin() {
             NotificationPermission.NOT_REQUESTED,
             NotificationPermission.DENIED_CAN_ASK -> Unit
         }
-        permissionPreferences().edit().putBoolean(KEY_NOTIFICATION_REQUESTED, true).apply()
         requestPermissionForAlias(
             NOTIFICATION_PERMISSION_ALIAS,
             call,
@@ -77,6 +104,11 @@ class AndroidHostPlugin : Plugin() {
 
     @PermissionCallback
     private fun notificationPermissionCallback(call: PluginCall) {
+        AndroidNotificationPermissionHistory(permissionPreferences()).recordResult(
+            granted = hasNotificationPermission(),
+            shouldShowRationale = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS),
+        )
         val capabilities = capabilitiesJson()
         notifyCapabilities(capabilities)
         call.resolve(capabilities)
@@ -258,7 +290,8 @@ class AndroidHostPlugin : Plugin() {
         apiLevel = Build.VERSION.SDK_INT,
         overlayGranted = Settings.canDrawOverlays(context),
         notificationsGranted = hasNotificationPermission(),
-        notificationRequested = permissionPreferences().getBoolean(KEY_NOTIFICATION_REQUESTED, false),
+        notificationPromptCount = AndroidNotificationPermissionHistory(permissionPreferences()).promptCount(),
+        notificationDenialCount = AndroidNotificationPermissionHistory(permissionPreferences()).denialCount(),
         shouldShowRationale = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
             && activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS),
     )
