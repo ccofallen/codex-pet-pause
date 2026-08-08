@@ -4,8 +4,10 @@ import kotlin.math.abs
 
 enum class MotionAction {
     DOWN,
+    POINTER_DOWN,
     MOVE,
     UP,
+    POINTER_UP,
     CANCEL,
     WAIT,
 }
@@ -68,19 +70,22 @@ class OverlayGestureInterpreter(
     fun consume(sample: MotionEventSample): OverlayGestureResult {
         return when (sample.action) {
             MotionAction.DOWN -> onDown(sample)
+            MotionAction.POINTER_DOWN -> onDown(sample)
             MotionAction.MOVE -> onMove(sample)
             MotionAction.UP -> onUp(sample)
-            MotionAction.CANCEL -> {
-                activeGesture = null
-                OverlayGestureResult.NoOp
-            }
+            MotionAction.POINTER_UP -> onUp(sample)
+            MotionAction.CANCEL -> onCancel(sample)
             MotionAction.WAIT -> onWait(sample.eventTimeMs)
         }
     }
 
     private fun onDown(sample: MotionEventSample): OverlayGestureResult {
+        if (activeGesture != null) return OverlayGestureResult.NoOp
         val pendingTap = pendingTapUpAtMs
-        val isSecondTap = pendingTap != null && sample.eventTimeMs - pendingTap <= doubleTapWindowMs
+        val elapsedSincePending = pendingTap?.let { sample.eventTimeMs - it }
+        val expiredPendingTap = elapsedSincePending != null && elapsedSincePending >= doubleTapWindowMs
+        val isSecondTap = elapsedSincePending != null && elapsedSincePending in 0..doubleTapWindowMs
+        if (expiredPendingTap) pendingTapUpAtMs = null
         activeGesture = ActiveGesture(
             pointerId = sample.pointerId,
             startX = sample.x,
@@ -90,7 +95,7 @@ class OverlayGestureInterpreter(
             initialPlacement = placement,
             isSecondTap = isSecondTap,
         )
-        return OverlayGestureResult.NoOp
+        return if (expiredPendingTap) OverlayGestureResult.SingleTap else OverlayGestureResult.NoOp
     }
 
     private fun onMove(sample: MotionEventSample): OverlayGestureResult {
@@ -102,43 +107,14 @@ class OverlayGestureInterpreter(
         gesture.dragging = true
         pendingTapUpAtMs = null
 
-        val initialEdge = gesture.initialPlacement.attachment as? Attachment.Edge
-        if (initialEdge != null) {
-            if (isOutward(initialEdge.side, sample.x - gesture.startX, sample.y - gesture.startY)) {
-                gesture.outward = true
-                return OverlayGestureResult.NoOp
-            }
-        }
-
-        val candidate = geometry.clamp(
-            PointF(sample.x - gesture.offsetX, sample.y - gesture.offsetY),
-            bounds,
-            gesture.initialPlacement.sizeDp,
-        )
-        val side = geometry.sideIfInsideZone(candidate, bounds, gesture.initialPlacement.sizeDp)
-        placement = if (side == null) {
-            OverlayPlacement(
-                candidate.x.toInt(),
-                candidate.y.toInt(),
-                gesture.initialPlacement.sizeDp,
-                Attachment.Free,
-            )
-        } else {
-            val snapped = geometry.snapIfInsideZone(candidate, bounds, gesture.initialPlacement.sizeDp)
-            OverlayPlacement(
-                snapped.x.toInt(),
-                snapped.y.toInt(),
-                gesture.initialPlacement.sizeDp,
-                Attachment.Edge(side, retracted = false),
-            )
-        }
+        placement = freePlacement(candidateFor(sample, gesture), gesture.initialPlacement.sizeDp)
         return OverlayGestureResult.PlacementChanged(placement)
     }
 
     private fun onUp(sample: MotionEventSample): OverlayGestureResult {
         val gesture = activeGesture ?: return OverlayGestureResult.NoOp
-        activeGesture = null
         if (gesture.pointerId != sample.pointerId) return OverlayGestureResult.NoOp
+        activeGesture = null
 
         if (!gesture.dragging) {
             if (gesture.isSecondTap && pendingTapUpAtMs != null &&
@@ -158,11 +134,40 @@ class OverlayGestureInterpreter(
         }
 
         val initialEdge = gesture.initialPlacement.attachment as? Attachment.Edge
-        if (initialEdge != null && gesture.outward && !initialEdge.retracted) {
+        val finalCandidate = candidateFor(sample, gesture)
+        val finalOutward = initialEdge != null && isOutward(
+            initialEdge.side,
+            sample.x - gesture.startX,
+            sample.y - gesture.startY,
+        )
+        if (initialEdge?.retracted == true && finalOutward) {
+            placement = gesture.initialPlacement
+            return OverlayGestureResult.PlacementChanged(placement)
+        }
+        if (initialEdge != null && finalOutward && !initialEdge.retracted) {
             placement = geometry.retract(gesture.initialPlacement, bounds)
             return OverlayGestureResult.PlacementChanged(placement)
         }
+        val side = geometry.sideIfInsideZone(finalCandidate, bounds, gesture.initialPlacement.sizeDp)
+        placement = if (side == null) {
+            freePlacement(finalCandidate, gesture.initialPlacement.sizeDp)
+        } else {
+            val snapped = geometry.snapIfInsideZone(finalCandidate, bounds, gesture.initialPlacement.sizeDp)
+            OverlayPlacement(
+                snapped.x.toInt(),
+                snapped.y.toInt(),
+                gesture.initialPlacement.sizeDp,
+                Attachment.Edge(side, retracted = false),
+            )
+        }
         return OverlayGestureResult.PlacementChanged(placement)
+    }
+
+    private fun onCancel(sample: MotionEventSample): OverlayGestureResult {
+        val gesture = activeGesture ?: return OverlayGestureResult.NoOp
+        if (gesture.pointerId != sample.pointerId) return OverlayGestureResult.NoOp
+        activeGesture = null
+        return OverlayGestureResult.NoOp
     }
 
     private fun onWait(atMs: Long): OverlayGestureResult {
@@ -184,6 +189,19 @@ class OverlayGestureInterpreter(
         Side.BOTTOM -> dy > touchSlopDp
     }
 
+    private fun candidateFor(sample: MotionEventSample, gesture: ActiveGesture): PointF = geometry.clamp(
+        PointF(sample.x - gesture.offsetX, sample.y - gesture.offsetY),
+        bounds,
+        gesture.initialPlacement.sizeDp,
+    )
+
+    private fun freePlacement(point: PointF, sizeDp: Int) = OverlayPlacement(
+        point.x.toInt(),
+        point.y.toInt(),
+        sizeDp,
+        Attachment.Free,
+    )
+
     private class ActiveGesture(
         val pointerId: Int,
         val startX: Float,
@@ -193,6 +211,5 @@ class OverlayGestureInterpreter(
         val initialPlacement: OverlayPlacement,
         val isSecondTap: Boolean,
         var dragging: Boolean = false,
-        var outward: Boolean = false,
     )
 }

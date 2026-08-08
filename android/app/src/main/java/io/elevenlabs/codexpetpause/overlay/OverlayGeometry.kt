@@ -2,6 +2,8 @@ package io.elevenlabs.codexpetpause.overlay
 
 import kotlin.math.roundToInt
 
+const val MIN_VISIBLE_DP: Int = 20
+
 data class PointF(val x: Float, val y: Float)
 
 data class SafeInsets(
@@ -20,6 +22,10 @@ data class Bounds(
         require(widthDp >= 0 && heightDp >= 0)
         require(safeInsets.left >= 0 && safeInsets.top >= 0)
         require(safeInsets.right >= 0 && safeInsets.bottom >= 0)
+        require(safeInsets.left + safeInsets.right < widthDp)
+        require(safeInsets.top + safeInsets.bottom < heightDp)
+        require(widthDp - safeInsets.left - safeInsets.right >= MIN_VISIBLE_DP)
+        require(heightDp - safeInsets.top - safeInsets.bottom >= MIN_VISIBLE_DP)
     }
 
     val left: Int get() = safeInsets.left
@@ -56,17 +62,17 @@ data class OverlayPlacement(
 
 class OverlayGeometry(
     private val edgeZoneDp: Int = 24,
-    private val minVisibleDp: Int = 20,
+    private val minVisibleDp: Int = MIN_VISIBLE_DP,
     val defaultSizeDp: Int = PetSize.MEDIUM.sizeDp,
 ) {
     init {
         require(edgeZoneDp >= 0)
-        require(minVisibleDp > 0)
-        require(defaultSizeDp > 0)
+        require(minVisibleDp >= MIN_VISIBLE_DP)
+        require(defaultSizeDp >= minVisibleDp)
     }
 
     fun clamp(point: PointF, bounds: Bounds, sizeDp: Int = defaultSizeDp): PointF {
-        require(sizeDp > 0)
+        require(sizeDp >= minVisibleDp)
         return PointF(
             point.x.coerceIn(bounds.left.toFloat(), maxX(bounds, sizeDp).toFloat()),
             point.y.coerceIn(bounds.top.toFloat(), maxY(bounds, sizeDp).toFloat()),
@@ -91,7 +97,7 @@ class OverlayGeometry(
 
     fun retract(placement: OverlayPlacement, bounds: Bounds): OverlayPlacement {
         val edge = placement.attachment as? Attachment.Edge
-            ?: return placement.copy(x = clamp(PointF(placement.x.toFloat(), placement.y.toFloat()), bounds, placement.sizeDp).x.roundToInt())
+            ?: return placement
         val full = fullEdgePoint(PointF(placement.x.toFloat(), placement.y.toFloat()), edge.side, bounds, placement.sizeDp)
         val retractedPoint = when (edge.side) {
             Side.LEFT -> full.copy(x = (bounds.left - placement.sizeDp + minVisibleDp).toFloat())
@@ -119,7 +125,7 @@ class OverlayGeometry(
     }
 
     fun resizeAroundAnchor(placement: OverlayPlacement, newSizeDp: Int, bounds: Bounds): OverlayPlacement {
-        require(newSizeDp > 0)
+        require(newSizeDp >= minVisibleDp)
         val edge = placement.attachment as? Attachment.Edge
         if (edge != null) {
             val resized = placement.copy(sizeDp = newSizeDp, attachment = Attachment.Edge(edge.side, false))

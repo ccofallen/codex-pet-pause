@@ -30,6 +30,54 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
+    fun moveStaysFreeAndOnlyActivePointerUpSnapsIntoTheEdgeZone() {
+        val interpreter = interpreter()
+
+        interpreter.consume(MotionEventSample.down(x = 230f, y = 340f, atMs = 0))
+        val moved = interpreter.consume(MotionEventSample.move(x = 390f, y = 340f, atMs = 16))
+
+        assertEquals(PlacementChanged(OverlayPlacement(328, 300, 72, Attachment.Free)), moved)
+        assertEquals(Attachment.Free, interpreter.state)
+        assertEquals(
+            PlacementChanged(OverlayPlacement(328, 300, 72, Attachment.Edge(Side.RIGHT, retracted = false))),
+            interpreter.consume(MotionEventSample.up(x = 390f, y = 340f, atMs = 32)),
+        )
+    }
+
+    @Test
+    fun attachedNineDpInwardMoveDetachesUntilUpMayResnapInTheZone() {
+        val interpreter = interpreter()
+        dragToRightEdge(interpreter, atMs = 0)
+
+        interpreter.consume(MotionEventSample.down(x = 350f, y = 340f, atMs = 1_000))
+        val moved = interpreter.consume(MotionEventSample.move(x = 341f, y = 340f, atMs = 1_016))
+
+        assertEquals(PlacementChanged(OverlayPlacement(319, 300, 72, Attachment.Free)), moved)
+        assertEquals(Attachment.Free, interpreter.state)
+        assertEquals(
+            PlacementChanged(OverlayPlacement(328, 300, 72, Attachment.Edge(Side.RIGHT, retracted = false))),
+            interpreter.consume(MotionEventSample.up(x = 341f, y = 340f, atMs = 1_032)),
+        )
+    }
+
+    @Test
+    fun outwardThenFinalInwardMovementKeepsTheFinalFreeCandidate() {
+        val interpreter = interpreter()
+        dragToRightEdge(interpreter, atMs = 0)
+
+        interpreter.consume(MotionEventSample.down(x = 350f, y = 340f, atMs = 1_000))
+        interpreter.consume(MotionEventSample.move(x = 390f, y = 340f, atMs = 1_016))
+        val movedInward = interpreter.consume(MotionEventSample.move(x = 300f, y = 340f, atMs = 1_032))
+
+        assertEquals(PlacementChanged(OverlayPlacement(278, 300, 72, Attachment.Free)), movedInward)
+        assertEquals(
+            PlacementChanged(OverlayPlacement(278, 300, 72, Attachment.Free)),
+            interpreter.consume(MotionEventSample.up(x = 300f, y = 340f, atMs = 1_048)),
+        )
+        assertEquals(Attachment.Free, interpreter.state)
+    }
+
+    @Test
     fun dragIntoEdgeZoneAttachesAndFirstOutwardSwipeOnlyPreparesRetractedState() {
         val interpreter = interpreter()
 
@@ -85,6 +133,53 @@ class OverlayGestureInterpreterTest {
         val result = interpreter.consume(MotionEventSample.wait(atMs = 267))
 
         assertEquals(SingleTap, result)
+    }
+
+    @Test
+    fun expiredPendingTapIsSettledWhenNewDownArrivesAndNewUpCanPendAgain() {
+        val interpreter = interpreter()
+        tap(interpreter, x = 200f, y = 340f, atMs = 0)
+
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 267)))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 283)))
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = 534)))
+    }
+
+    @Test
+    fun secondPointerCannotReplaceOrFinishTheActivePointerGesture() {
+        val interpreter = interpreter()
+
+        interpreter.consume(MotionEventSample.down(x = 230f, y = 340f, atMs = 0, pointerId = 0))
+        assertEquals(
+            NoOp,
+            interpreter.consume(MotionEventSample(MotionAction.POINTER_DOWN, x = 390f, y = 340f, eventTimeMs = 8, pointerId = 1)),
+        )
+        assertEquals(
+            NoOp,
+            interpreter.consume(MotionEventSample.move(x = 390f, y = 340f, atMs = 16, pointerId = 1)),
+        )
+        assertEquals(
+            NoOp,
+            interpreter.consume(MotionEventSample(MotionAction.POINTER_UP, x = 390f, y = 340f, eventTimeMs = 24, pointerId = 1)),
+        )
+        assertEquals(
+            PlacementChanged(OverlayPlacement(209, 300, 72, Attachment.Free)),
+            interpreter.consume(MotionEventSample.move(x = 239f, y = 340f, atMs = 32, pointerId = 0)),
+        )
+    }
+
+    @Test
+    fun activePointerCancelKeepsLastSafePlacementWithoutTapSnapOrRetraction() {
+        val interpreter = interpreter()
+        dragToRightEdge(interpreter, atMs = 0)
+
+        interpreter.consume(MotionEventSample.down(x = 350f, y = 340f, atMs = 1_000, pointerId = 0))
+        interpreter.consume(MotionEventSample.move(x = 390f, y = 340f, atMs = 1_016, pointerId = 0))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample(MotionAction.CANCEL, eventTimeMs = 1_032, pointerId = 0)))
+
+        assertEquals(Attachment.Free, interpreter.state)
+        assertEquals(OverlayPlacement(328, 300, 72, Attachment.Free), interpreter.placement)
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.wait(atMs = 2_000)))
     }
 
     private fun interpreter() = OverlayGestureInterpreter(
