@@ -24,9 +24,9 @@ class OverlayGestureInterpreterTest {
         val interpreter = interpreter()
 
         interpreter.consume(MotionEventSample.down(x = 230f, y = 340f, atMs = 0))
-        val moved = interpreter.consume(MotionEventSample.move(x = 231f, y = 341f, atMs = 16))
+        val moved = interpreter.consume(MotionEventSample.move(x = 239f, y = 340f, atMs = 16))
 
-        assertEquals(PlacementChanged(OverlayPlacement(201, 301, 72, Attachment.Free)), moved)
+        assertEquals(PlacementChanged(OverlayPlacement(209, 300, 72, Attachment.Free)), moved)
     }
 
     @Test
@@ -82,7 +82,7 @@ class OverlayGestureInterpreterTest {
         val interpreter = interpreter()
 
         tap(interpreter, x = 200f, y = 340f, atMs = 0)
-        val result = interpreter.consume(MotionEventSample.wait(atMs = 251))
+        val result = interpreter.consume(MotionEventSample.wait(atMs = 267))
 
         assertEquals(SingleTap, result)
     }

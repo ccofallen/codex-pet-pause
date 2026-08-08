@@ -81,10 +81,10 @@ class OverlayGeometry(
     fun sideIfInsideZone(point: PointF, bounds: Bounds, sizeDp: Int = defaultSizeDp): Side? {
         require(sizeDp > 0)
         val candidates = listOfNotNull(
-            (point.x - bounds.left).takeIf { it <= edgeZoneDp }?.let { it to Side.LEFT },
-            (bounds.right - (point.x + sizeDp)).takeIf { it <= edgeZoneDp }?.let { it to Side.RIGHT },
-            (point.y - bounds.top).takeIf { it <= edgeZoneDp }?.let { it to Side.TOP },
-            (bounds.bottom - (point.y + sizeDp)).takeIf { it <= edgeZoneDp }?.let { it to Side.BOTTOM },
+            (point.x - bounds.left).takeIf { it <= edgeZoneDp.toFloat() }?.let { it to Side.LEFT },
+            (bounds.right - (point.x + sizeDp)).takeIf { it <= edgeZoneDp.toFloat() }?.let { it to Side.RIGHT },
+            (point.y - bounds.top).takeIf { it <= edgeZoneDp.toFloat() }?.let { it to Side.TOP },
+            (bounds.bottom - (point.y + sizeDp)).takeIf { it <= edgeZoneDp.toFloat() }?.let { it to Side.BOTTOM },
         )
         return candidates.minByOrNull { it.first }?.second
     }
@@ -94,10 +94,10 @@ class OverlayGeometry(
             ?: return placement.copy(x = clamp(PointF(placement.x.toFloat(), placement.y.toFloat()), bounds, placement.sizeDp).x.roundToInt())
         val full = fullEdgePoint(PointF(placement.x.toFloat(), placement.y.toFloat()), edge.side, bounds, placement.sizeDp)
         val retractedPoint = when (edge.side) {
-            Side.LEFT -> full.copy(x = bounds.left - placement.sizeDp + minVisibleDp)
-            Side.RIGHT -> full.copy(x = bounds.right - minVisibleDp)
-            Side.TOP -> full.copy(y = bounds.top - placement.sizeDp + minVisibleDp)
-            Side.BOTTOM -> full.copy(y = bounds.bottom - minVisibleDp)
+            Side.LEFT -> full.copy(x = (bounds.left - placement.sizeDp + minVisibleDp).toFloat())
+            Side.RIGHT -> full.copy(x = (bounds.right - minVisibleDp).toFloat())
+            Side.TOP -> full.copy(y = (bounds.top - placement.sizeDp + minVisibleDp).toFloat())
+            Side.BOTTOM -> full.copy(y = (bounds.bottom - minVisibleDp).toFloat())
         }
         return OverlayPlacement(
             retractedPoint.x.roundToInt(),

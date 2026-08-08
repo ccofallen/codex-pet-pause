@@ -35,3 +35,34 @@ Existing generated `release/` and `dist-android/` content was not staged or comm
 ## Concerns
 
 - Focused and full native tests remain unverified until an Android SDK with compile/target SDK 36 is available.
+
+## Follow-up verification
+
+The provided environment was used exactly as requested:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH
+```
+
+RED evidence:
+
+1. The original no-environment Gradle attempt was blocked before compilation because no Java Runtime was available.
+2. With the provided environment, focused tests first reached Kotlin compilation and failed because `PointF.copy` received `Int` coordinates in `retract`.
+3. After the compile fix, focused tests reached behavior and reported 12 tests with 2 failures: a sample movement was below the configured 8dp touch slop, and the single-tap wait sample was only 235ms after `ACTION_UP`.
+4. After correcting those samples, one pointer-offset assertion still expected 210dp while the actual offset-preserving value was 209dp.
+
+GREEN evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+Result: `BUILD SUCCESSFUL`; all 12 focused geometry/gesture tests passed.
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH npm run android:test:native
+```
+
+Result: `BUILD SUCCESSFUL`; complete `testDebugUnitTest` passed.
+
+The follow-up fixes are committed in the final SHA reported with this task.
