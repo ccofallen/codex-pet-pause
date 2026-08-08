@@ -83,7 +83,7 @@ class OverlayGestureInterpreter(
         if (activeGesture != null) return OverlayGestureResult.NoOp
         val pendingTap = pendingTapUpAtMs
         val elapsedSincePending = pendingTap?.let { sample.eventTimeMs - it }
-        val expiredPendingTap = elapsedSincePending != null && elapsedSincePending >= doubleTapWindowMs
+        val expiredPendingTap = elapsedSincePending != null && elapsedSincePending > doubleTapWindowMs
         val isSecondTap = elapsedSincePending != null && elapsedSincePending in 0..doubleTapWindowMs
         if (expiredPendingTap) pendingTapUpAtMs = null
         activeGesture = ActiveGesture(
@@ -117,9 +117,7 @@ class OverlayGestureInterpreter(
         activeGesture = null
 
         if (!gesture.dragging) {
-            if (gesture.isSecondTap && pendingTapUpAtMs != null &&
-                sample.eventTimeMs - pendingTapUpAtMs!! <= doubleTapWindowMs
-            ) {
+            if (gesture.isSecondTap && pendingTapUpAtMs != null) {
                 pendingTapUpAtMs = null
                 return OverlayGestureResult.OpenMenu
             }
@@ -164,8 +162,7 @@ class OverlayGestureInterpreter(
     }
 
     private fun onCancel(sample: MotionEventSample): OverlayGestureResult {
-        val gesture = activeGesture ?: return OverlayGestureResult.NoOp
-        if (gesture.pointerId != sample.pointerId) return OverlayGestureResult.NoOp
+        if (activeGesture == null) return OverlayGestureResult.NoOp
         activeGesture = null
         return OverlayGestureResult.NoOp
     }

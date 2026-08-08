@@ -146,6 +146,24 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
+    fun doubleTapWindowTreats249And250AsDoubleTapAnd251AsSingleTap() {
+        val at249 = interpreter()
+        tap(at249, x = 200f, y = 340f, atMs = 0)
+        assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 265)))
+        assertEquals(OpenMenu, at249.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 281)))
+
+        val at250 = interpreter()
+        tap(at250, x = 200f, y = 340f, atMs = 0)
+        assertEquals(NoOp, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 266)))
+        assertEquals(OpenMenu, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 282)))
+
+        val at251 = interpreter()
+        tap(at251, x = 200f, y = 340f, atMs = 0)
+        assertEquals(SingleTap, at251.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 267)))
+        assertEquals(NoOp, at251.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 283)))
+    }
+
+    @Test
     fun secondPointerCannotReplaceOrFinishTheActivePointerGesture() {
         val interpreter = interpreter()
 
@@ -180,6 +198,21 @@ class OverlayGestureInterpreterTest {
         assertEquals(Attachment.Free, interpreter.state)
         assertEquals(OverlayPlacement(328, 300, 72, Attachment.Free), interpreter.placement)
         assertEquals(NoOp, interpreter.consume(MotionEventSample.wait(atMs = 2_000)))
+    }
+
+    @Test
+    fun cancelAlwaysClearsActiveGestureRegardlessOfCancelPointerId() {
+        val interpreter = interpreter()
+        dragToRightEdge(interpreter, atMs = 0)
+
+        interpreter.consume(MotionEventSample.down(x = 350f, y = 340f, atMs = 1_000, pointerId = 7))
+        interpreter.consume(MotionEventSample.move(x = 390f, y = 340f, atMs = 1_016, pointerId = 7))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample(MotionAction.CANCEL, eventTimeMs = 1_032)))
+        assertEquals(OverlayPlacement(328, 300, 72, Attachment.Free), interpreter.placement)
+
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.move(x = 300f, y = 340f, atMs = 1_048, pointerId = 7)))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.up(x = 300f, y = 340f, atMs = 1_064, pointerId = 7)))
+        assertEquals(OverlayPlacement(328, 300, 72, Attachment.Free), interpreter.placement)
     }
 
     private fun interpreter() = OverlayGestureInterpreter(
