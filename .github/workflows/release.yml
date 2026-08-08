@@ -44,6 +44,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      - name: Install Android verification tools
+        run: sdkmanager "build-tools;36.0.0"
       - run: npm ci
       - name: Verify release tag
         run: node scripts/verify-release-tag.mjs "$GITHUB_REF_NAME"
@@ -63,7 +70,8 @@ jobs:
           ANDROID_RELEASE_DIR: ${{ runner.temp }}/release/android
         run: |
           node scripts/verify-release-artifacts.mjs "$DESKTOP_RELEASE_DIR"
-          node scripts/verify-android-release.mjs "$ANDROID_RELEASE_DIR"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          ANDROID_APKSIGNER="$APKSIGNER" node scripts/verify-android-release.mjs "$ANDROID_RELEASE_DIR"
       - name: Stage validated complete release
         env:
           DESKTOP_RELEASE_DIR: ${{ runner.temp }}/release/desktop
