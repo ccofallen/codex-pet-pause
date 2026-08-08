@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest';
+import { createDefaultSettings } from '../../app/defaults';
 import { createAndroidHost, type AndroidHostPlugin } from './androidHost';
 
 const rawSnapshot = {
   schemaVersion: 1,
-  settingsJson: '{"schemaVersion":5}',
+  settingsJson: JSON.stringify(createDefaultSettings(1, 'en')),
   historyJson: [],
   pets: [],
   overlay: { xRatio: 0.2, yRatio: 0.3 },

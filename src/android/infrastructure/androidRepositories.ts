@@ -80,7 +80,7 @@ export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepo
   return {
     async load(): Promise<AppSettings | null> {
       const snapshot = await host.loadSnapshot();
-      if (snapshot === null) return null;
+      if (snapshot === null || snapshot.settingsJson === null) return null;
       const value = parseRecord(snapshot.settingsJson, 'invalid Android settings');
       if (value.schemaVersion !== 5) throw new Error('invalid Android settings');
       return value as unknown as AppSettings;

@@ -1,6 +1,6 @@
 export const ANDROID_STATE_SCHEMA_VERSION = 1 as const;
 const SAFE_PET_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const SAFE_ASSET_PATH = /^pets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/spritesheet\.webp$/;
+const SAFE_ASSET_PATH = /^pets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/([a-f0-9]{32})\/spritesheet\.webp$/;
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ACTIVITY_ACTIONS = new Set(['completed', 'snoozed', 'skipped']);
 const REMINDER_TYPES = new Set(['lookAway', 'drinkWater', 'standUp', 'takeBreak']);
@@ -20,7 +20,7 @@ export interface AndroidOverlayState {
 
 export interface AndroidHostSnapshot {
   schemaVersion: 1;
-  settingsJson: string;
+  settingsJson: string | null;
   historyJson: readonly string[];
   pets: readonly AndroidPetAsset[];
   overlay: AndroidOverlayState;
@@ -45,8 +45,89 @@ function parseJsonRecord(value: unknown, message: string): RecordValue {
 
 export function validateAndroidSettingsJson(value: unknown): string {
   const parsed = parseJsonRecord(value, 'invalid Android settings JSON');
-  if (parsed.schemaVersion !== 5) throw new Error('invalid Android settings JSON');
+  const quietHours = parsed.quietHours;
+  const runtime = parsed.runtime;
+  const cat = parsed.cat;
+  const petPosition = parsed.petPosition;
+  if (parsed.schemaVersion !== 5
+    || (parsed.locale !== 'zh-CN' && parsed.locale !== 'en')
+    || typeof parsed.onboardingComplete !== 'boolean'
+    || !['light', 'dark', 'system'].includes(parsed.theme as string)
+    || !['small', 'medium', 'large'].includes(parsed.petSize as string)
+    || typeof parsed.soundEnabled !== 'boolean'
+    || typeof parsed.animationsEnabled !== 'boolean'
+    || !finiteInRange(parsed.affinity, 0, 100)
+    || !isRecord(quietHours)
+    || typeof quietHours.enabled !== 'boolean'
+    || !integerInRange(quietHours.startMinutes, 0, 1439)
+    || !integerInRange(quietHours.endMinutes, 0, 1439)
+    || !validRuntime(runtime)
+    || !isRecord(cat) || !trimmedCodePointLength(cat.name, 1, 20)
+    || !trimmedCodePointLength(parsed.activePetId, 1, 64)
+    || !isRecord(petPosition)
+    || !finiteInRange(petPosition.xRatio, 0, 1)
+    || !finiteInRange(petPosition.yRatio, 0, 1)
+    || !validReminders(parsed.reminders)) {
+    throw new Error('invalid Android settings JSON');
+  }
   return value as string;
+}
+
+function finiteInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
+}
+
+function integerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return finiteInRange(value, minimum, maximum) && Number.isInteger(value);
+}
+
+function trimmedCodePointLength(value: unknown, minimum: number, maximum: number): value is string {
+  if (typeof value !== 'string' || value !== value.trim()) return false;
+  const length = Array.from(value).length;
+  return length >= minimum && length <= maximum;
+}
+
+function optionalFinite(value: RecordValue, key: string): boolean {
+  return value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key]));
+}
+
+function validRuntime(value: unknown): boolean {
+  if (!isRecord(value) || !optionalFinite(value, 'pausedAt')
+    || !optionalFinite(value, 'pausedUntil') || !optionalFinite(value, 'quietStartedAt')) return false;
+  const hasPausedAt = value.pausedAt !== undefined;
+  const hasPausedUntil = value.pausedUntil !== undefined;
+  return hasPausedAt === hasPausedUntil
+    && (!hasPausedAt || (value.pausedAt as number) <= (value.pausedUntil as number));
+}
+
+function validReminders(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length < 4 || value.length > 24) return false;
+  const ids = new Set<string>();
+  const presets = new Set<string>();
+  let customs = 0;
+  for (const reminder of value) {
+    if (!isRecord(reminder)
+      || !trimmedCodePointLength(reminder.id, 1, 64)
+      || ids.has(reminder.id)
+      || typeof reminder.enabled !== 'boolean'
+      || !integerInRange(reminder.intervalMinutes, 1, 720)
+      || typeof reminder.nextDueAt !== 'number' || !Number.isFinite(reminder.nextDueAt)
+      || !['scheduled', 'due', 'snoozed', 'disabled'].includes(reminder.status as string)
+      || !optionalFinite(reminder, 'snoozedUntil')) return false;
+    ids.add(reminder.id);
+    if (reminder.kind === 'preset') {
+      if (typeof reminder.type !== 'string' || !REMINDER_TYPES.has(reminder.type)
+        || reminder.id !== reminder.type || presets.has(reminder.type)
+        || (reminder.optionalActionDurationSeconds !== undefined
+          && !integerInRange(reminder.optionalActionDurationSeconds, 10, 7200))) return false;
+      presets.add(reminder.type);
+    } else if (reminder.kind === 'custom') {
+      customs += 1;
+      if (customs > 20 || REMINDER_TYPES.has(reminder.id)
+        || !trimmedCodePointLength(reminder.label, 1, 40)) return false;
+    } else return false;
+  }
+  return [...REMINDER_TYPES].every((type) => presets.has(type));
 }
 
 export function validateAndroidActivityEventJson(value: unknown): string {
@@ -136,7 +217,7 @@ export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | 
   }
   return {
     schemaVersion: ANDROID_STATE_SCHEMA_VERSION,
-    settingsJson: validateAndroidSettingsJson(value.settingsJson),
+    settingsJson: value.settingsJson === null ? null : validateAndroidSettingsJson(value.settingsJson),
     historyJson,
     pets,
     overlay: {

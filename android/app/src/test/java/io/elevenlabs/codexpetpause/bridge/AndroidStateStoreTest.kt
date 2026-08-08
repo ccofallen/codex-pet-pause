@@ -12,8 +12,8 @@ class AndroidStateStoreTest {
     fun failedReplacementKeepsPreviousState() {
         val fileSystem = FailingStateFileSystem()
         val store = AndroidStateStore(File("/state"), fileSystem)
-        val validSnapshot = """{"schemaVersion":1,"settingsJson":"{\"schemaVersion\":5}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
-        val replacement = """{"schemaVersion":1,"settingsJson":"{\"schemaVersion\":5,\"theme\":\"dark\"}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
+        val validSnapshot = snapshot(SETTINGS)
+        val replacement = snapshot(SETTINGS.replace("\"theme\":\"system\"", "\"theme\":\"dark\""))
 
         store.writeSnapshot(validSnapshot)
         fileSystem.failNextAtomicWrite()
@@ -28,7 +28,7 @@ class AndroidStateStoreTest {
         val store = AndroidStateStore(File("/state"), fileSystem)
 
         assertThrows(IllegalArgumentException::class.java) {
-            store.writePet("../escape", "{\"id\":\"escape\"}", "c3ByaXRl")
+            store.writePetVersion("../escape", REVISION, petMetadata("escape"), "c3ByaXRl")
         }
 
         assertTrue(fileSystem.createdDirectories.isEmpty())
@@ -49,12 +49,39 @@ class AndroidStateStoreTest {
         val store = AndroidStateStore(File("/state"), fileSystem)
 
         assertThrows(IllegalArgumentException::class.java) {
-            store.writePet("momo", "{not-json}", "c3ByaXRl")
+            store.writePetVersion("momo", REVISION, "{not-json}", "c3ByaXRl")
         }
         assertThrows(IllegalArgumentException::class.java) {
-            store.writePet("momo", """{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}""", "AB==")
+            store.writePetVersion("momo", REVISION, petMetadata("momo"), "AB==")
         }
         assertTrue(fileSystem.createdDirectories.isEmpty())
+    }
+
+    @Test
+    fun rejectsUnsafeRevisionAndIncompleteSettingsShape() {
+        val store = AndroidStateStore(File("/state"), FailingStateFileSystem())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writePetVersion("momo", "../revision", petMetadata("momo"), "c3ByaXRl")
+        }
+        assertThrows(Exception::class.java) { store.writeSnapshot(snapshot("""{"schemaVersion":5}""")) }
+        assertThrows(Exception::class.java) {
+            store.writeSnapshot(snapshot(SETTINGS.replace("\"theme\":\"system\"", "\"theme\":\"neon\"")))
+        }
+        assertThrows(Exception::class.java) {
+            store.writeSnapshot(snapshot(SETTINGS.replace(REMINDERS, "[]")))
+        }
+        assertThrows(Exception::class.java) {
+            store.writeSnapshot(snapshot(SETTINGS.replace("\"runtime\":{}", "\"runtime\":{\"quietStartedAt\":null}")))
+        }
+    }
+
+    companion object {
+        private const val REVISION = "0123456789abcdef0123456789abcdef"
+        private const val REMINDERS = """[{"id":"lookAway","kind":"preset","type":"lookAway","enabled":false,"intervalMinutes":20,"nextDueAt":1200000,"status":"disabled"},{"id":"drinkWater","kind":"preset","type":"drinkWater","enabled":false,"intervalMinutes":45,"nextDueAt":2700000,"status":"disabled"},{"id":"standUp","kind":"preset","type":"standUp","enabled":false,"intervalMinutes":60,"nextDueAt":3600000,"status":"disabled"},{"id":"takeBreak","kind":"preset","type":"takeBreak","enabled":false,"intervalMinutes":90,"nextDueAt":5400000,"status":"disabled"}]"""
+        private const val SETTINGS = """{"schemaVersion":5,"locale":"en","onboardingComplete":false,"theme":"system","petSize":"medium","soundEnabled":false,"animationsEnabled":true,"affinity":0,"quietHours":{"enabled":false,"startMinutes":1320,"endMinutes":420},"runtime":{},"cat":{"name":"Momo"},"activePetId":"builtin-cat","petPosition":{"xRatio":0.82,"yRatio":0.72},"reminders":$REMINDERS}"""
+        private fun petMetadata(id: String) = """{"id":"$id","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}"""
+        private fun snapshot(settings: String) = """{"schemaVersion":1,"settingsJson":${org.json.JSONObject.quote(settings)},"historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
     }
 }
 
@@ -78,6 +105,8 @@ private class FailingStateFileSystem : StateFileSystem {
     }
 
     override fun exists(file: File): Boolean = false
+
+    override fun listChildren(directory: File): List<File> = emptyList()
 
     override fun createTemporarySibling(target: File): File {
         return File(target.parentFile, ".${target.name}.tmp").also(createdDirectories::add)

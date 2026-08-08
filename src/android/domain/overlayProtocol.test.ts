@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'vitest';
+import { createDefaultSettings } from '../../app/defaults';
 import { parseAndroidHostSnapshot } from './overlayProtocol';
+
+const REVISION = '0123456789abcdef0123456789abcdef';
 
 function snapshotFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: 1,
-    settingsJson: '{"schemaVersion":5}',
+    settingsJson: JSON.stringify(createDefaultSettings(1, 'en')),
     historyJson: [],
     pets: [],
     overlay: {
@@ -13,7 +16,7 @@ function snapshotFixture(overrides: Record<string, unknown> = {}): Record<string
       activePet: {
         id: 'momo',
         metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}',
-        assetPath: 'pets/momo/spritesheet.webp',
+        assetPath: `pets/momo/${REVISION}/spritesheet.webp`,
         spritesheetBase64: 'c3ByaXRl',
       },
     },
@@ -52,7 +55,7 @@ describe('parseAndroidHostSnapshot', () => {
     const pet = {
       id: 'momo',
       metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}',
-      assetPath: 'pets/momo/spritesheet.webp',
+      assetPath: `pets/momo/${REVISION}/spritesheet.webp`,
       spritesheetBase64: 'c3ByaXRl',
     };
     const value = parseAndroidHostSnapshot(snapshotFixture({
@@ -74,10 +77,32 @@ describe('parseAndroidHostSnapshot', () => {
     expect(() => parseAndroidHostSnapshot(snapshotFixture({ historyJson: ['{"schemaVersion":5}'] })))
       .toThrow('invalid Android history JSON');
     expect(() => parseAndroidHostSnapshot(snapshotFixture({
-      pets: [{ id: 'momo', metadataJson: '{"schemaVersion":5}', assetPath: 'pets/momo/spritesheet.webp', spritesheetBase64: 'c3ByaXRl' }],
+      pets: [{ id: 'momo', metadataJson: '{"schemaVersion":5}', assetPath: `pets/momo/${REVISION}/spritesheet.webp`, spritesheetBase64: 'c3ByaXRl' }],
     }))).toThrow('invalid Android pet metadata JSON');
     expect(() => parseAndroidHostSnapshot(snapshotFixture({
-      pets: [{ id: 'momo', metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}', assetPath: 'pets/momo/spritesheet.webp', spritesheetBase64: 'AB==' }],
+      pets: [{ id: 'momo', metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}', assetPath: `pets/momo/${REVISION}/spritesheet.webp`, spritesheetBase64: 'AB==' }],
     }))).toThrow('invalid Android pet spritesheet');
+  });
+
+  test('accepts cleared settings but rejects incomplete or invalid v5 settings', () => {
+    expect(parseAndroidHostSnapshot(snapshotFixture({ settingsJson: null }))?.settingsJson).toBeNull();
+    expect(() => parseAndroidHostSnapshot(snapshotFixture({ settingsJson: '{"schemaVersion":5}' })))
+      .toThrow('invalid Android settings JSON');
+    expect(() => parseAndroidHostSnapshot(snapshotFixture({
+      settingsJson: JSON.stringify({ ...createDefaultSettings(1, 'en'), theme: 'neon' }),
+    }))).toThrow('invalid Android settings JSON');
+    expect(() => parseAndroidHostSnapshot(snapshotFixture({
+      settingsJson: JSON.stringify({ ...createDefaultSettings(1, 'en'), reminders: [{ id: 'lookAway' }] }),
+    }))).toThrow('invalid Android settings JSON');
+  });
+
+  test('accepts only immutable revision asset paths', () => {
+    const metadataJson = '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}';
+    expect(() => parseAndroidHostSnapshot(snapshotFixture({
+      pets: [{ id: 'momo', metadataJson, assetPath: 'pets/momo/spritesheet.webp', spritesheetBase64: 'c3ByaXRl' }],
+    }))).toThrow('invalid Android pet asset');
+    expect(() => parseAndroidHostSnapshot(snapshotFixture({
+      pets: [{ id: 'momo', metadataJson, assetPath: 'pets/momo/not-a-revision/spritesheet.webp', spritesheetBase64: 'c3ByaXRl' }],
+    }))).toThrow('invalid Android pet asset');
   });
 });

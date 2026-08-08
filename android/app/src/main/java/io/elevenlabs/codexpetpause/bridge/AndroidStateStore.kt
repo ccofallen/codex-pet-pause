@@ -12,10 +12,19 @@ internal interface StateFileSystem {
     fun readText(file: File): String?
     fun writeAtomically(file: File, value: String)
     fun exists(file: File): Boolean
+    fun listChildren(directory: File): List<File>
     fun createTemporarySibling(target: File): File
     fun writeFile(file: File, value: ByteArray)
     fun replaceDirectory(temporary: File, target: File)
     fun deleteRecursively(file: File)
+}
+
+internal interface RevisionTokenSource {
+    fun nextRevision(): String
+}
+
+private object UuidRevisionTokenSource : RevisionTokenSource {
+    override fun nextRevision(): String = UUID.randomUUID().toString().replace("-", "")
 }
 
 internal class AndroidStateFileSystem : StateFileSystem {
@@ -37,9 +46,10 @@ internal class AndroidStateFileSystem : StateFileSystem {
     }
 
     override fun exists(file: File): Boolean = file.exists()
+    override fun listChildren(directory: File): List<File> = directory.listFiles()?.toList().orEmpty()
 
     override fun createTemporarySibling(target: File): File {
-        val parent = target.parentFile ?: throw IOException("Pet directory has no parent")
+        val parent = target.parentFile ?: throw IOException("Asset directory has no parent")
         parent.mkdirs()
         return File(parent, ".${target.name}.${UUID.randomUUID()}.tmp")
     }
@@ -50,17 +60,8 @@ internal class AndroidStateFileSystem : StateFileSystem {
     }
 
     override fun replaceDirectory(temporary: File, target: File) {
-        val parent = target.parentFile ?: throw IOException("Pet directory has no parent")
-        val backup = File(parent, ".${target.name}.${UUID.randomUUID()}.backup")
-        val hadTarget = target.exists()
-        if (hadTarget && !target.renameTo(backup)) throw IOException("Could not preserve existing pet")
-        try {
-            if (!temporary.renameTo(target)) throw IOException("Could not replace pet assets")
-            if (hadTarget) deleteRecursively(backup)
-        } catch (error: IOException) {
-            if (hadTarget && !target.exists()) backup.renameTo(target)
-            throw error
-        }
+        if (target.exists()) throw IOException("Immutable asset version already exists")
+        if (!temporary.renameTo(target)) throw IOException("Could not install immutable pet assets")
     }
 
     override fun deleteRecursively(file: File) {
@@ -71,18 +72,25 @@ internal class AndroidStateFileSystem : StateFileSystem {
 
 internal object AndroidStateValidator {
     private val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    private val safeRevision = Regex("^[a-f0-9]{32}$")
     private val canonicalBase64 = Regex("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
     private val actions = setOf("completed", "snoozed", "skipped")
     private val reminderTypes = setOf("lookAway", "drinkWater", "standUp", "takeBreak")
+    private val reminderStatuses = setOf("scheduled", "due", "snoozed", "disabled")
 
     fun requireSafePetId(id: String) {
         require(safePetId.matches(id)) { "Unsafe Android pet id" }
     }
 
+    fun requireSafeRevision(revision: String) {
+        require(safeRevision.matches(revision)) { "Unsafe Android pet revision" }
+    }
+
     fun validateSnapshot(value: String) {
         val snapshot = objectValue(value, "Invalid Android state snapshot")
         require(integer(snapshot, "schemaVersion") == 1) { "Unsupported Android state schema" }
-        validateSettings(string(snapshot, "settingsJson"))
+        require(snapshot.has("settingsJson")) { "Invalid Android settings JSON" }
+        if (!snapshot.isNull("settingsJson")) validateSettings(string(snapshot, "settingsJson"))
         val history = snapshot.getJSONArray("historyJson")
         for (index in 0 until history.length()) validateActivityEvent(history.getString(index))
         val pets = snapshot.getJSONArray("pets")
@@ -95,7 +103,25 @@ internal object AndroidStateValidator {
 
     fun validateSettings(value: String) {
         val settings = objectValue(value, "Invalid Android settings JSON")
-        require(integer(settings, "schemaVersion") == 5) { "Invalid Android settings JSON" }
+        require(integer(settings, "schemaVersion") == 5
+            && string(settings, "locale") in setOf("zh-CN", "en")
+            && boolean(settings, "onboardingComplete")
+            && string(settings, "theme") in setOf("light", "dark", "system")
+            && string(settings, "petSize") in setOf("small", "medium", "large")
+            && boolean(settings, "soundEnabled")
+            && boolean(settings, "animationsEnabled")) { "Invalid Android settings JSON" }
+        numberInRange(settings, "affinity", 0.0, 100.0)
+        val quietHours = settings.getJSONObject("quietHours")
+        boolean(quietHours, "enabled")
+        integerInRange(quietHours, "startMinutes", 0, 1439)
+        integerInRange(quietHours, "endMinutes", 0, 1439)
+        validateRuntime(settings.getJSONObject("runtime"))
+        require(trimmedLength(settings.getJSONObject("cat"), "name", 1, 20)) { "Invalid Android settings JSON" }
+        require(trimmedLength(settings, "activePetId", 1, 64)) { "Invalid Android settings JSON" }
+        val position = settings.getJSONObject("petPosition")
+        numberInRange(position, "xRatio", 0.0, 1.0)
+        numberInRange(position, "yRatio", 0.0, 1.0)
+        validateReminders(settings.getJSONArray("reminders"))
     }
 
     fun validateActivityEvent(value: String) {
@@ -127,63 +153,116 @@ internal object AndroidStateValidator {
 
     fun decodeSpritesheet(value: String): ByteArray {
         require(value.isNotEmpty() && canonicalBase64.matches(value)) { "Invalid Android pet spritesheet" }
-        val decoded = try {
-            Base64.getDecoder().decode(value)
-        } catch (error: IllegalArgumentException) {
-            throw IllegalArgumentException("Invalid Android pet spritesheet", error)
-        }
-        require(decoded.isNotEmpty() && Base64.getEncoder().encodeToString(decoded) == value) {
-            "Invalid Android pet spritesheet"
-        }
+        val decoded = try { Base64.getDecoder().decode(value) }
+        catch (error: IllegalArgumentException) { throw IllegalArgumentException("Invalid Android pet spritesheet", error) }
+        require(decoded.isNotEmpty() && Base64.getEncoder().encodeToString(decoded) == value) { "Invalid Android pet spritesheet" }
         return decoded
+    }
+
+    fun assetDirectory(filesDir: File, assetPath: String): File {
+        val parts = assetPath.split('/')
+        require(parts.size == 4 && parts[0] == "pets" && parts[3] == "spritesheet.webp") { "Invalid Android pet asset path" }
+        requireSafePetId(parts[1])
+        requireSafeRevision(parts[2])
+        return File(File(File(filesDir, "pets"), parts[1]), parts[2])
     }
 
     private fun validatePetAsset(asset: JSONObject) {
         val id = string(asset, "id")
         requireSafePetId(id)
-        require(string(asset, "assetPath") == "pets/$id/spritesheet.webp") { "Invalid Android pet asset path" }
+        val assetPath = string(asset, "assetPath")
+        val directory = assetDirectory(File("/validation"), assetPath)
+        require(directory.parentFile?.name == id) { "Invalid Android pet asset path" }
         validatePetMetadata(string(asset, "metadataJson"), id)
         decodeSpritesheet(string(asset, "spritesheetBase64"))
     }
 
-    private fun objectValue(value: String, message: String): JSONObject = try {
-        JSONObject(value)
-    } catch (error: Exception) {
-        throw IllegalArgumentException(message, error)
-    }
-
-    private fun string(value: JSONObject, key: String): String {
-        val candidate = value.get(key)
-        require(candidate is String) { "Invalid Android JSON field: $key" }
-        return candidate
-    }
-
-    private fun nonEmptyString(value: JSONObject, key: String): Boolean = string(value, key).isNotEmpty()
-
-    private fun optionalString(value: JSONObject, key: String): Boolean =
-        !value.has(key) || value.isNull(key) || value.get(key) is String
-
-    private fun integer(value: JSONObject, key: String): Int {
-        val candidate = value.get(key)
-        require(candidate is Number && candidate.toDouble().isFinite() && candidate.toDouble() % 1.0 == 0.0) {
-            "Invalid Android JSON field: $key"
+    private fun validateRuntime(runtime: JSONObject) {
+        require(optionalFinite(runtime, "pausedAt") && optionalFinite(runtime, "pausedUntil")
+            && optionalFinite(runtime, "quietStartedAt")) { "Invalid Android settings JSON" }
+        val hasAt = runtime.has("pausedAt") && !runtime.isNull("pausedAt")
+        val hasUntil = runtime.has("pausedUntil") && !runtime.isNull("pausedUntil")
+        require(hasAt == hasUntil && (!hasAt || runtime.getDouble("pausedAt") <= runtime.getDouble("pausedUntil"))) {
+            "Invalid Android settings JSON"
         }
-        return candidate.toInt()
     }
 
-    private fun finiteNumber(value: JSONObject, key: String): Double {
-        val candidate = value.get(key)
-        require(candidate is Number && candidate.toDouble().isFinite()) { "Invalid Android JSON field: $key" }
-        return candidate.toDouble()
+    private fun validateReminders(reminders: org.json.JSONArray) {
+        require(reminders.length() in 4..24) { "Invalid Android settings JSON" }
+        val ids = mutableSetOf<String>()
+        val presets = mutableSetOf<String>()
+        var customs = 0
+        for (index in 0 until reminders.length()) {
+            val reminder = reminders.getJSONObject(index)
+            val id = string(reminder, "id")
+            require(trimmedLength(reminder, "id", 1, 64) && ids.add(id)
+                && boolean(reminder, "enabled")
+                && integerInRange(reminder, "intervalMinutes", 1, 720)
+                && finiteNumber(reminder, "nextDueAt").isFinite()
+                && string(reminder, "status") in reminderStatuses
+                && optionalFinite(reminder, "snoozedUntil")) { "Invalid Android settings JSON" }
+            when (string(reminder, "kind")) {
+                "preset" -> {
+                    val type = string(reminder, "type")
+                    require(type in reminderTypes && id == type && presets.add(type)) { "Invalid Android settings JSON" }
+                    if (reminder.has("optionalActionDurationSeconds")) {
+                        require(!reminder.isNull("optionalActionDurationSeconds")) { "Invalid Android settings JSON" }
+                        integerInRange(reminder, "optionalActionDurationSeconds", 10, 7200)
+                    }
+                }
+                "custom" -> {
+                    customs += 1
+                    require(customs <= 20 && id !in reminderTypes && trimmedLength(reminder, "label", 1, 40)) {
+                        "Invalid Android settings JSON"
+                    }
+                }
+                else -> throw IllegalArgumentException("Invalid Android settings JSON")
+            }
+        }
+        require(presets == reminderTypes) { "Invalid Android settings JSON" }
+    }
+
+    private fun objectValue(value: String, message: String): JSONObject = try { JSONObject(value) }
+    catch (error: Exception) { throw IllegalArgumentException(message, error) }
+    private fun string(value: JSONObject, key: String): String = value.get(key).let {
+        require(it is String) { "Invalid Android JSON field: $key" }; it
+    }
+    private fun boolean(value: JSONObject, key: String): Boolean = value.get(key).let {
+        require(it is Boolean) { "Invalid Android JSON field: $key" }; true
+    }
+    private fun nonEmptyString(value: JSONObject, key: String) = string(value, key).isNotEmpty()
+    private fun optionalString(value: JSONObject, key: String) = !value.has(key)
+        || (!value.isNull(key) && value.get(key) is String)
+    private fun optionalFinite(value: JSONObject, key: String) = !value.has(key)
+        || (!value.isNull(key) && value.get(key) is Number && (value.get(key) as Number).toDouble().isFinite())
+    private fun integer(value: JSONObject, key: String): Int = value.get(key).let {
+        require(it is Number && it.toDouble().isFinite() && it.toDouble() % 1.0 == 0.0) { "Invalid Android JSON field: $key" }
+        it.toInt()
+    }
+    private fun integerInRange(value: JSONObject, key: String, minimum: Int, maximum: Int): Boolean {
+        require(integer(value, key) in minimum..maximum) { "Invalid Android JSON field: $key" }
+        return true
+    }
+    private fun finiteNumber(value: JSONObject, key: String): Double = value.get(key).let {
+        require(it is Number && it.toDouble().isFinite()) { "Invalid Android JSON field: $key" }; it.toDouble()
+    }
+    private fun numberInRange(value: JSONObject, key: String, minimum: Double, maximum: Double) {
+        require(finiteNumber(value, key) in minimum..maximum) { "Invalid Android JSON field: $key" }
+    }
+    private fun trimmedLength(value: JSONObject, key: String, minimum: Int, maximum: Int): Boolean {
+        val text = string(value, key)
+        val length = text.codePointCount(0, text.length)
+        return text == text.trim() && length in minimum..maximum
     }
 }
 
 internal class AndroidStateStore(
     internal val filesDir: File,
     internal val fileSystem: StateFileSystem = AndroidStateFileSystem(),
+    private val revisions: RevisionTokenSource = UuidRevisionTokenSource,
 ) {
     private val stateFile = File(filesDir, "state.json")
-    internal val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    private val petsRoot = File(filesDir, "pets")
 
     fun readSnapshot(): String? = fileSystem.readText(stateFile)
 
@@ -192,15 +271,23 @@ internal class AndroidStateStore(
         fileSystem.writeAtomically(stateFile, snapshotJson)
     }
 
-    fun clearSnapshot() {
-        fileSystem.deleteRecursively(stateFile)
+    fun writeNewPetVersion(id: String, metadataJson: String, spritesheetBase64: String): String {
+        repeat(8) {
+            val revision = revisions.nextRevision()
+            AndroidStateValidator.requireSafeRevision(revision)
+            val target = versionDirectory(id, revision)
+            if (!fileSystem.exists(target)) return writePetVersion(id, revision, metadataJson, spritesheetBase64)
+        }
+        throw IOException("Could not allocate a unique pet revision")
     }
 
-    fun writePet(id: String, metadataJson: String, spritesheetBase64: String) {
+    fun writePetVersion(id: String, revision: String, metadataJson: String, spritesheetBase64: String): String {
         AndroidStateValidator.requireSafePetId(id)
+        AndroidStateValidator.requireSafeRevision(revision)
         AndroidStateValidator.validatePetMetadata(metadataJson, id)
         val spritesheet = AndroidStateValidator.decodeSpritesheet(spritesheetBase64)
-        val target = petDirectory(id)
+        val target = versionDirectory(id, revision)
+        require(!fileSystem.exists(target)) { "Immutable Android pet revision already exists" }
         val temporary = fileSystem.createTemporarySibling(target)
         try {
             fileSystem.writeFile(File(temporary, "pet.json"), metadataJson.toByteArray(Charsets.UTF_8))
@@ -210,69 +297,20 @@ internal class AndroidStateStore(
             runCatching { fileSystem.deleteRecursively(temporary) }
             throw error
         }
+        return "pets/$id/$revision/spritesheet.webp"
     }
 
-    fun savePetAndSnapshot(id: String, metadataJson: String, spritesheetBase64: String, snapshotJson: String) {
-        AndroidStateValidator.requireSafePetId(id)
-        AndroidStateValidator.validatePetMetadata(metadataJson, id)
-        AndroidStateValidator.decodeSpritesheet(spritesheetBase64)
-        AndroidStateValidator.validateSnapshot(snapshotJson)
-        val previous = readSnapshot()
-        val target = petDirectory(id)
-        val backup = fileSystem.createTemporarySibling(target)
-        var backedUp = false
-        var installed = false
-        try {
-            if (fileSystem.exists(target)) {
-                fileSystem.replaceDirectory(target, backup)
-                backedUp = true
-            }
-            writePet(id, metadataJson, spritesheetBase64)
-            installed = true
-            writeSnapshot(snapshotJson)
-        } catch (error: Throwable) {
-            throw rollback("save", error, previous) {
-                if (installed) fileSystem.deleteRecursively(target)
-                if (backedUp) fileSystem.replaceDirectory(backup, target)
-            }
-        }
-        if (backedUp) runCatching { fileSystem.deleteRecursively(backup) }
+    fun deleteAsset(assetPath: String) {
+        val directory = AndroidStateValidator.assetDirectory(filesDir, assetPath)
+        fileSystem.deleteRecursively(directory)
+        val idDirectory = directory.parentFile ?: return
+        if (fileSystem.listChildren(idDirectory).isEmpty()) runCatching { fileSystem.deleteRecursively(idDirectory) }
     }
 
-    fun deletePetAndSnapshot(id: String, snapshotJson: String) {
-        AndroidStateValidator.requireSafePetId(id)
-        AndroidStateValidator.validateSnapshot(snapshotJson)
-        val previous = readSnapshot()
-        val target = petDirectory(id)
-        val backup = fileSystem.createTemporarySibling(target)
-        var backedUp = false
-        try {
-            if (fileSystem.exists(target)) {
-                fileSystem.replaceDirectory(target, backup)
-                backedUp = true
-            }
-            writeSnapshot(snapshotJson)
-        } catch (error: Throwable) {
-            throw rollback("delete", error, previous) {
-                if (backedUp) fileSystem.replaceDirectory(backup, target)
-            }
-        }
-        if (backedUp) runCatching { fileSystem.deleteRecursively(backup) }
+    fun deleteAllPetDirectories() {
+        fileSystem.listChildren(petsRoot).forEach { child -> runCatching { fileSystem.deleteRecursively(child) } }
+        if (fileSystem.listChildren(petsRoot).isEmpty()) runCatching { fileSystem.deleteRecursively(petsRoot) }
     }
 
-    private fun rollback(operation: String, cause: Throwable, previous: String?, restoreAssets: () -> Unit): IOException {
-        val recoveryErrors = mutableListOf<Throwable>()
-        try { restoreAssets() } catch (error: Throwable) { recoveryErrors += error }
-        try {
-            if (previous == null) clearSnapshot() else writeSnapshot(previous)
-        } catch (error: Throwable) {
-            recoveryErrors += error
-        }
-        val state = if (recoveryErrors.isEmpty()) "complete" else "failed"
-        return IOException("$operation transaction failed; recovery=$state", cause).also { failure ->
-            recoveryErrors.forEach(failure::addSuppressed)
-        }
-    }
-
-    private fun petDirectory(id: String) = File(File(filesDir, "pets"), id)
+    private fun versionDirectory(id: String, revision: String) = File(File(petsRoot, id), revision)
 }

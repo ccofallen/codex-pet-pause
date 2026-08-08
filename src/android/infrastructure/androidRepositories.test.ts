@@ -30,7 +30,7 @@ function createHost(): AndroidHost {
         pets: [...snapshot.pets.filter((pet) => pet.id !== input.id), {
           id: input.id,
           metadataJson: input.metadataJson,
-          assetPath: `pets/${input.id}/spritesheet.webp`,
+          assetPath: `pets/${input.id}/0123456789abcdef0123456789abcdef/spritesheet.webp`,
           spritesheetBase64: input.spritesheetBase64,
         }],
       };
@@ -75,5 +75,18 @@ describe('Android repositories', () => {
     host.appendHistory('{"id":"missing-action"}');
 
     await expect(createAndroidHistoryRepository(host).listSince(0)).rejects.toThrow('invalid Android history event');
+  });
+
+  test('returns null after native settings are cleared without losing the snapshot', async () => {
+    const host = createHost();
+    host.clearSettings = async () => {
+      const current = await host.loadSnapshot();
+      if (current !== null) Object.assign(current, { settingsJson: null });
+    };
+    const settings = createAndroidSettingsRepository(host);
+
+    await settings.clear();
+
+    await expect(settings.load()).resolves.toBeNull();
   });
 });

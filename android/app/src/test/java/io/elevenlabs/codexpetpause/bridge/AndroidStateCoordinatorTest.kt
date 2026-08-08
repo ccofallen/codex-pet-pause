@@ -2,120 +2,152 @@ package io.elevenlabs.codexpetpause.bridge
 
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidStateCoordinatorTest {
     @Test
     fun cleanInstallHasNoSnapshot() {
-        val coordinator = fixture().coordinator
-
-        assertNull(coordinator.loadSnapshot())
+        assertNull(fixture().coordinator.loadSnapshot())
     }
 
     @Test
-    fun delegatesSettingsHistoryAndSelectionMutationsToPersistentState() {
-        val fixture = fixture()
-        fixture.coordinator.saveSettings(SETTINGS)
-        fixture.coordinator.appendHistory(EVENT)
-        fixture.coordinator.savePet("momo", petMetadata("momo", "Momo"), "bW9tbw==")
-        fixture.coordinator.selectPet("momo")
-
-        val snapshot = JSONObject(fixture.coordinator.loadSnapshot()!!)
-        assertEquals(SETTINGS, snapshot.getString("settingsJson"))
-        assertEquals(EVENT, snapshot.getJSONArray("historyJson").getString(0))
-        assertEquals("momo", snapshot.getJSONObject("overlay").getJSONObject("activePet").getString("id"))
-
-        fixture.coordinator.replaceHistory(listOf(replacementEvent()))
-        fixture.coordinator.clearHistory()
-        assertEquals(0, JSONObject(fixture.coordinator.loadSnapshot()!!).getJSONArray("historyJson").length())
-        fixture.coordinator.clearSettings()
-        assertNull(fixture.coordinator.loadSnapshot())
-    }
-
-    @Test
-    fun saveSnapshotFailureRestoresPreviousSnapshotAndAssetDirectory() {
+    fun sameIdSnapshotFailureNeverChangesOldPathOrBytes() {
         val fixture = fixtureWithPets("momo")
         val previous = fixture.store.readSnapshot()
-        val previousAsset = fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp")
+        val oldPath = assetPath(JSONObject(previous!!).getJSONArray("pets").getJSONObject(0))
+        val oldBytes = fixture.fileSystem.readBytes(oldPath)
         fixture.fileSystem.failNextAtomicWrite()
+        fixture.fileSystem.failNextDelete()
 
         assertThrows(IOException::class.java) {
             fixture.coordinator.savePet("momo", petMetadata("momo", "New Momo"), "bmV3")
         }
 
-        assertEquals(previous, fixture.store.readSnapshot())
-        assertArrayEquals(previousAsset, fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp"))
+        val stored = JSONObject(fixture.store.readSnapshot()!!)
+        assertEquals(oldPath, assetPath(stored.getJSONArray("pets").getJSONObject(0)))
+        assertArrayEquals(oldBytes, fixture.fileSystem.readBytes(oldPath))
+        assertArrayEquals("new".toByteArray(), fixture.fileSystem.readBytes("pets/momo/$NEW_REVISION/spritesheet.webp"))
     }
 
     @Test
-    fun saveFailureOnCleanInstallRestoresUninitializedStateAndNoAsset() {
+    fun cleanInstallSnapshotFailureLeavesOnlyAnUnreferencedVersion() {
         val fixture = fixture()
         fixture.fileSystem.failNextAtomicWrite()
+        fixture.fileSystem.failNextDelete()
 
         assertThrows(IOException::class.java) {
             fixture.coordinator.savePet("momo", petMetadata("momo", "Momo"), "bmV3")
         }
 
         assertNull(fixture.store.readSnapshot())
-        assertNull(fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp"))
+        assertArrayEquals("new".toByteArray(), fixture.fileSystem.readBytes("pets/momo/$NEW_REVISION/spritesheet.webp"))
     }
 
     @Test
-    fun saveAssetFailureDoesNotChangePreviousSnapshotOrAsset() {
+    fun successfulReplacementIgnoresOldVersionCleanupFailure() {
         val fixture = fixtureWithPets("momo")
-        val previous = fixture.store.readSnapshot()
-        val previousAsset = fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp")
-        fixture.fileSystem.failNextAssetWrite()
+        val oldSnapshot = JSONObject(fixture.store.readSnapshot()!!)
+        val oldPath = assetPath(oldSnapshot.getJSONArray("pets").getJSONObject(0))
+        fixture.fileSystem.failNextDelete()
 
-        assertThrows(IOException::class.java) {
-            fixture.coordinator.savePet("momo", petMetadata("momo", "New Momo"), "bmV3")
+        fixture.coordinator.savePet("momo", petMetadata("momo", "New Momo"), "bmV3")
+
+        val stored = JSONObject(fixture.store.readSnapshot()!!)
+        assertEquals("pets/momo/$NEW_REVISION/spritesheet.webp", assetPath(stored.getJSONArray("pets").getJSONObject(0)))
+        assertEquals("pets/momo/$NEW_REVISION/spritesheet.webp", assetPath(stored.getJSONObject("overlay").getJSONObject("activePet")))
+        assertArrayEquals("new".toByteArray(), fixture.fileSystem.readBytes("pets/momo/$NEW_REVISION/spritesheet.webp"))
+        assertArrayEquals("old".toByteArray(), fixture.fileSystem.readBytes(oldPath))
+    }
+
+    @Test
+    fun deleteCommitsReferenceRemovalBeforeBestEffortAssetCleanup() {
+        val fixture = fixtureWithPets("momo")
+        val oldPath = assetPath(JSONObject(fixture.store.readSnapshot()!!).getJSONArray("pets").getJSONObject(0))
+        fixture.fileSystem.failNextDelete()
+
+        fixture.coordinator.deletePet("momo")
+
+        val stored = JSONObject(fixture.store.readSnapshot()!!)
+        assertEquals(0, stored.getJSONArray("pets").length())
+        assertFalse(stored.getJSONObject("overlay").has("activePet"))
+        assertArrayEquals("old".toByteArray(), fixture.fileSystem.readBytes(oldPath))
+    }
+
+    @Test
+    fun clearOperationsConvergeInEveryOrderAndRemoveUnindexedPetDirectories() {
+        val operations = listOf("settings", "history", "pets")
+        permutations(operations).forEach { order ->
+            val fixture = fixtureWithPets("momo")
+            fixture.store.writePetVersion("orphan", ORPHAN_REVISION, petMetadata("orphan", "Orphan"), "b3JwaGFu")
+
+            order.forEach { operation ->
+                when (operation) {
+                    "settings" -> fixture.coordinator.clearSettings()
+                    "history" -> fixture.coordinator.clearHistory()
+                    else -> fixture.coordinator.clearPets()
+                }
+            }
+
+            assertCleared(fixture)
+            assertFalse(fixture.fileSystem.hasPath("/state/pets"))
         }
-
-        assertEquals(previous, fixture.store.readSnapshot())
-        assertArrayEquals(previousAsset, fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp"))
     }
 
     @Test
-    fun deleteSnapshotFailureRestoresPreviousSnapshotAndAssetDirectory() {
+    fun concurrentClearMutationsUseOneCoordinatorLock() {
         val fixture = fixtureWithPets("momo")
-        val previous = fixture.store.readSnapshot()
-        val previousAsset = fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp")
-        fixture.fileSystem.failNextAtomicWrite()
+        fixture.fileSystem.writeDelayMillis = 30
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(3)
+        val futures = listOf(
+            executor.submit { start.await(); fixture.coordinator.clearSettings() },
+            executor.submit { start.await(); fixture.coordinator.clearHistory() },
+            executor.submit { start.await(); fixture.coordinator.clearPets() },
+        )
 
-        assertThrows(IOException::class.java) { fixture.coordinator.deletePet("momo") }
+        start.countDown()
+        futures.forEach { it.get(5, TimeUnit.SECONDS) }
+        executor.shutdownNow()
 
-        assertEquals(previous, fixture.store.readSnapshot())
-        assertArrayEquals(previousAsset, fixture.fileSystem.readBytes("/state/pets/momo/spritesheet.webp"))
+        assertCleared(fixture)
+        assertEquals(1, fixture.fileSystem.maximumConcurrentWrites.get())
     }
 
-    @Test
-    fun deletingInactivePetPreservesActivePet() {
-        val fixture = fixtureWithPets("momo", "lulu")
-
-        fixture.coordinator.deletePet("lulu")
-
+    private fun assertCleared(fixture: Fixture) {
         val snapshot = JSONObject(fixture.store.readSnapshot()!!)
-        assertEquals("momo", snapshot.getJSONObject("overlay").getJSONObject("activePet").getString("id"))
-        assertEquals(1, snapshot.getJSONArray("pets").length())
-        assertFalse(fixture.fileSystem.hasPath("/state/pets/lulu"))
+        assertTrue(snapshot.isNull("settingsJson"))
+        assertEquals(0, snapshot.getJSONArray("historyJson").length())
+        assertEquals(0, snapshot.getJSONArray("pets").length())
+        assertFalse(snapshot.getJSONObject("overlay").has("activePet"))
     }
 
     private fun fixture(): Fixture {
         val fileSystem = MemoryStateFileSystem()
-        val store = AndroidStateStore(File("/state"), fileSystem)
+        val revisions = SequenceRevisionTokenSource(NEW_REVISION, "00000000000000000000000000000003")
+        val store = AndroidStateStore(File("/state"), fileSystem, revisions)
         return Fixture(fileSystem, store, AndroidStateCoordinator(store))
     }
 
     private fun fixtureWithPets(vararg ids: String): Fixture {
         val fixture = fixture()
-        ids.forEach { id -> fixture.store.writePet(id, petMetadata(id, id.replaceFirstChar(Char::uppercase)), "b2xk") }
-        fixture.store.writeSnapshot(snapshot(ids.toList(), activePetId = ids.first()))
+        val assets = ids.mapIndexed { index, id ->
+            val revision = (index + 1).toString(16).padStart(32, '0')
+            val path = fixture.store.writePetVersion(id, revision, petMetadata(id, id.replaceFirstChar(Char::uppercase)), "b2xk")
+            petAsset(id, path, "b2xk")
+        }
+        fixture.store.writeSnapshot(snapshot(assets, ids.firstOrNull()))
         return fixture
     }
 
@@ -126,83 +158,119 @@ class AndroidStateCoordinatorTest {
     )
 
     companion object {
-        private const val SETTINGS = """{"schemaVersion":5}"""
+        private const val NEW_REVISION = "00000000000000000000000000000002"
+        private const val ORPHAN_REVISION = "0000000000000000000000000000000f"
         private const val EVENT = """{"id":"event-1","action":"completed","occurredAt":100}"""
+        private const val REMINDERS = """[{"id":"lookAway","kind":"preset","type":"lookAway","enabled":false,"intervalMinutes":20,"nextDueAt":1200000,"status":"disabled"},{"id":"drinkWater","kind":"preset","type":"drinkWater","enabled":false,"intervalMinutes":45,"nextDueAt":2700000,"status":"disabled"},{"id":"standUp","kind":"preset","type":"standUp","enabled":false,"intervalMinutes":60,"nextDueAt":3600000,"status":"disabled"},{"id":"takeBreak","kind":"preset","type":"takeBreak","enabled":false,"intervalMinutes":90,"nextDueAt":5400000,"status":"disabled"}]"""
+        private const val SETTINGS = """{"schemaVersion":5,"locale":"en","onboardingComplete":false,"theme":"system","petSize":"medium","soundEnabled":false,"animationsEnabled":true,"affinity":0,"quietHours":{"enabled":false,"startMinutes":1320,"endMinutes":420},"runtime":{},"cat":{"name":"Momo"},"activePetId":"builtin-cat","petPosition":{"xRatio":0.82,"yRatio":0.72},"reminders":$REMINDERS}"""
 
-        private fun replacementEvent() = """{"id":"event-2","action":"skipped","occurredAt":200}"""
         private fun petMetadata(id: String, displayName: String) =
             """{"id":"$id","displayName":"$displayName","spriteVersion":2,"spritesheetFilename":"$id.webp","importedAt":10,"updatedAt":20}"""
 
-        private fun petAsset(id: String) =
-            """{"id":"$id","metadataJson":${JSONObject.quote(petMetadata(id, id.replaceFirstChar(Char::uppercase)))},"assetPath":"pets/$id/spritesheet.webp","spritesheetBase64":"b2xk"}"""
+        private fun petAsset(id: String, path: String, base64: String) = JSONObject()
+            .put("id", id)
+            .put("metadataJson", petMetadata(id, id.replaceFirstChar(Char::uppercase)))
+            .put("assetPath", path)
+            .put("spritesheetBase64", base64)
 
-        private fun snapshot(ids: List<String>, activePetId: String? = null): String {
-            val pets = ids.joinToString(",") { petAsset(it) }
-            val active = activePetId?.let { ",\"activePet\":${petAsset(it)}" }.orEmpty()
-            return """{"schemaVersion":1,"settingsJson":"{\"schemaVersion\":5}","historyJson":[],"pets":[$pets],"overlay":{"xRatio":0.5,"yRatio":0.5$active}}"""
+        private fun snapshot(pets: List<JSONObject>, activePetId: String?): String {
+            val petArray = org.json.JSONArray(pets)
+            val overlay = JSONObject().put("xRatio", 0.5).put("yRatio", 0.5)
+            pets.firstOrNull { it.getString("id") == activePetId }?.let { overlay.put("activePet", it) }
+            return JSONObject()
+                .put("schemaVersion", 1)
+                .put("settingsJson", SETTINGS)
+                .put("historyJson", org.json.JSONArray().put(EVENT))
+                .put("pets", petArray)
+                .put("overlay", overlay)
+                .toString()
         }
+
+        private fun assetPath(pet: JSONObject): String = pet.getString("assetPath")
+
+        private fun <T> permutations(values: List<T>): List<List<T>> = if (values.isEmpty()) listOf(emptyList()) else
+            values.flatMap { value -> permutations(values - value).map { listOf(value) + it } }
     }
 }
 
+private class SequenceRevisionTokenSource(vararg values: String) : RevisionTokenSource {
+    private val revisions = ArrayDeque(values.toList())
+    override fun nextRevision(): String = revisions.removeFirst()
+}
+
 private class MemoryStateFileSystem : StateFileSystem {
-    private val textFiles = mutableMapOf<String, String>()
-    private val binaryFiles = mutableMapOf<String, ByteArray>()
-    private val directories = mutableSetOf<String>()
-    private var temporarySequence = 0
-    private var shouldFailAtomicWrite = false
-    private var shouldFailAssetWrite = false
+    private val textFiles = ConcurrentHashMap<String, String>()
+    private val binaryFiles = ConcurrentHashMap<String, ByteArray>()
+    private val directories = ConcurrentHashMap.newKeySet<String>()
+    private val temporarySequence = AtomicInteger()
+    private val activeWrites = AtomicInteger()
+    val maximumConcurrentWrites = AtomicInteger()
+    @Volatile var writeDelayMillis = 0L
+    @Volatile private var shouldFailAtomicWrite = false
+    @Volatile private var shouldFailDelete = false
 
     fun failNextAtomicWrite() { shouldFailAtomicWrite = true }
-    fun failNextAssetWrite() { shouldFailAssetWrite = true }
-    fun readBytes(path: String): ByteArray? = binaryFiles[path]
-    fun hasPath(path: String): Boolean = directories.any { it == path || it.startsWith("$path/") }
-        || binaryFiles.keys.any { it.startsWith("$path/") }
+    fun failNextDelete() { shouldFailDelete = true }
+    fun readBytes(assetPath: String): ByteArray? = binaryFiles["/state/$assetPath"]?.copyOf()
+    fun hasPath(path: String): Boolean = textFiles.containsKey(path)
+        || directories.any { it == path || it.startsWith("$path/") }
+        || binaryFiles.keys.any { it == path || it.startsWith("$path/") }
 
     override fun readText(file: File): String? = textFiles[file.path]
 
     override fun writeAtomically(file: File, value: String) {
-        if (shouldFailAtomicWrite) {
-            shouldFailAtomicWrite = false
-            throw IOException("atomic write failed")
+        val concurrent = activeWrites.incrementAndGet()
+        maximumConcurrentWrites.accumulateAndGet(concurrent, ::maxOf)
+        try {
+            if (writeDelayMillis > 0) Thread.sleep(writeDelayMillis)
+            if (shouldFailAtomicWrite) {
+                shouldFailAtomicWrite = false
+                throw IOException("atomic write failed")
+            }
+            textFiles[file.path] = value
+        } finally {
+            activeWrites.decrementAndGet()
         }
-        textFiles[file.path] = value
     }
 
     override fun exists(file: File): Boolean = hasPath(file.path)
 
-    override fun createTemporarySibling(target: File): File {
-        temporarySequence += 1
-        return File(target.parentFile, ".${target.name}.$temporarySequence.tmp").also { directories += it.path }
+    override fun listChildren(directory: File): List<File> {
+        val prefix = "${directory.path}/"
+        return (directories.asSequence() + binaryFiles.keys.asSequence())
+            .filter { it.startsWith(prefix) }
+            .map { File(directory, it.removePrefix(prefix).substringBefore('/')) }
+            .distinctBy(File::getPath)
+            .toList()
     }
 
+    override fun createTemporarySibling(target: File): File =
+        File(target.parentFile, ".${target.name}.${temporarySequence.incrementAndGet()}.tmp").also { directories += it.path }
+
     override fun writeFile(file: File, value: ByteArray) {
-        if (shouldFailAssetWrite) {
-            shouldFailAssetWrite = false
-            throw IOException("asset write failed")
-        }
         directories += file.parentFile!!.path
         binaryFiles[file.path] = value.copyOf()
     }
 
     override fun replaceDirectory(temporary: File, target: File) {
+        if (exists(target)) throw IOException("immutable target exists")
         val sourcePrefix = "${temporary.path}/"
         val files = binaryFiles.filterKeys { it.startsWith(sourcePrefix) }
         if (!directories.contains(temporary.path) && files.isEmpty()) throw IOException("source directory missing")
-        deletePath(target.path)
         files.forEach { (path, bytes) -> binaryFiles["${target.path}/${path.removePrefix(sourcePrefix)}"] = bytes }
-        binaryFiles.keys.filter { it.startsWith(sourcePrefix) }.toList().forEach(binaryFiles::remove)
+        binaryFiles.keys.filter { it.startsWith(sourcePrefix) }.forEach(binaryFiles::remove)
         directories.removeAll { it == temporary.path || it.startsWith(sourcePrefix) }
         directories += target.path
     }
 
     override fun deleteRecursively(file: File) {
+        if (shouldFailDelete) {
+            shouldFailDelete = false
+            throw IOException("delete failed")
+        }
+        val prefix = "${file.path}/"
         textFiles.remove(file.path)
-        deletePath(file.path)
-    }
-
-    private fun deletePath(path: String) {
-        val prefix = "$path/"
-        binaryFiles.keys.filter { it == path || it.startsWith(prefix) }.toList().forEach(binaryFiles::remove)
-        directories.removeAll { it == path || it.startsWith(prefix) }
+        binaryFiles.keys.filter { it == file.path || it.startsWith(prefix) }.forEach(binaryFiles::remove)
+        directories.removeAll { it == file.path || it.startsWith(prefix) }
     }
 }
