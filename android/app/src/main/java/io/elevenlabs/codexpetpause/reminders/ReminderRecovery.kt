@@ -23,11 +23,14 @@ internal class JobSchedulerReminderRecovery(
     private val jobs = applicationContext.getSystemService(JobScheduler::class.java)
 
     override fun schedule(triggerAtMillis: Long) {
+        val minimumLatency = (triggerAtMillis - clock.now()).coerceAtLeast(0L)
+        val overrideDeadline = minimumLatency.saturatingAdd(MAX_RECOVERY_LATENESS_MILLIS)
         val job = JobInfo.Builder(
             JOB_ID,
             ComponentName(applicationContext, ReminderRecoveryJobService::class.java),
         )
-            .setMinimumLatency((triggerAtMillis - clock.now()).coerceAtLeast(0L))
+            .setMinimumLatency(minimumLatency)
+            .setOverrideDeadline(overrideDeadline)
             .setPersisted(true)
             .build()
         check(jobs.schedule(job) == JobScheduler.RESULT_SUCCESS) {
@@ -45,8 +48,17 @@ internal class JobSchedulerReminderRecovery(
 
     companion object {
         const val JOB_ID = 51_006
+
+        /**
+         * Gives JobScheduler meaningful batching flexibility while bounding
+         * recovery to fifteen minutes after the persisted reminder due time.
+         */
+        const val MAX_RECOVERY_LATENESS_MILLIS = 15 * 60_000L
     }
 }
+
+private fun Long.saturatingAdd(value: Long): Long =
+    if (this > Long.MAX_VALUE - value) Long.MAX_VALUE else this + value
 
 internal interface ReminderNotificationSink {
     fun notifyDue(snapshotJson: String, reminderId: String): Boolean

@@ -166,7 +166,7 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         for (index in 0 until incomingReminders.length()) {
             val candidate = incomingReminders.getJSONObject(index)
             val committed = reminderById(currentReminders, candidate.getString("id")) ?: continue
-            if (!sameReminderSchedule(candidate, committed)) continue
+            if (!sameReminderTiming(candidate, committed)) continue
             candidate
                 .put("status", committed.getString("status"))
                 .put("nextDueAt", committed.getLong("nextDueAt"))
@@ -207,13 +207,11 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         return latest.toString()
     }
 
-    private fun sameReminderSchedule(first: JSONObject, second: JSONObject): Boolean =
+    /** Labels and preset copy are presentation; they must not replace native runtime. */
+    private fun sameReminderTiming(first: JSONObject, second: JSONObject): Boolean =
         first.optString("id") == second.optString("id") &&
-            first.optString("kind") == second.optString("kind") &&
             first.optBoolean("enabled") == second.optBoolean("enabled") &&
-            first.optInt("intervalMinutes") == second.optInt("intervalMinutes") &&
-            first.optString("type") == second.optString("type") &&
-            first.optString("label") == second.optString("label")
+            first.optInt("intervalMinutes") == second.optInt("intervalMinutes")
 
     private fun reminderById(reminders: JSONArray, id: String): JSONObject? =
         (0 until reminders.length())

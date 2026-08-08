@@ -190,6 +190,36 @@ class ReminderEngineTest {
         assertEquals(ReminderRecoveryJobService::class.java.name, job!!.service.className)
         assertTrue(job.isPersisted)
         assertEquals(2_000L, job.minLatencyMillis)
+        assertEquals(
+            2_000L + JobSchedulerReminderRecovery.MAX_RECOVERY_LATENESS_MILLIS,
+            job.maxExecutionDelayMillis,
+        )
+        recovery.cancel()
+    }
+
+    @Test
+    fun recoveryClampsDueNowAndPastDueJobsToTheSameBoundedGraceWindow() {
+        now = 10_000L
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recovery = JobSchedulerReminderRecovery(context, clock)
+        val jobs = context.getSystemService(JobScheduler::class.java)
+        recovery.cancel()
+
+        recovery.schedule(10_000L)
+        val dueNow = requireNotNull(jobs.getPendingJob(JobSchedulerReminderRecovery.JOB_ID))
+        assertEquals(0L, dueNow.minLatencyMillis)
+        assertEquals(
+            JobSchedulerReminderRecovery.MAX_RECOVERY_LATENESS_MILLIS,
+            dueNow.maxExecutionDelayMillis,
+        )
+
+        recovery.schedule(2_000L)
+        val pastDue = requireNotNull(jobs.getPendingJob(JobSchedulerReminderRecovery.JOB_ID))
+        assertEquals(0L, pastDue.minLatencyMillis)
+        assertEquals(
+            JobSchedulerReminderRecovery.MAX_RECOVERY_LATENESS_MILLIS,
+            pastDue.maxExecutionDelayMillis,
+        )
         recovery.cancel()
     }
 
@@ -260,6 +290,96 @@ class ReminderEngineTest {
         assertEquals("scheduled", savedReminder("lookAway").getString("status"))
         assertEquals(70_000L, savedReminder("lookAway").getLong("nextDueAt"))
         assertEquals("completed", savedHistory().getJSONObject(0).getString("action"))
+    }
+
+    @Test
+    fun staleCustomLabelRenameAfterSnoozePreservesCommittedRuntime() {
+        now = 10_000L
+        val configured = reminders(lookAwayDueAt = Long.MAX_VALUE)
+            .put(custom("custom-eye", "Look away", 1_000L, 1))
+        seed(reminders = configured)
+        val staleRename = savedSettings()
+        staleRename.getJSONArray("reminders").getJSONObject(4).put("label", "Rest your eyes")
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(store.filesDir)
+        val engine = ReminderEngine(coordinator, clock, eventIds)
+        val snoozedUntil = now + 10 * 60_000L
+        val snoozed = CountDownLatch(1)
+
+        engine.reconcile(now)
+        val action = thread {
+            engine.snooze("custom-eye", snoozedUntil)
+            snoozed.countDown()
+        }
+        val rename = thread {
+            snoozed.await()
+            coordinator.saveSettings(staleRename.toString())
+        }
+        action.join()
+        rename.join()
+
+        val saved = savedReminder("custom-eye")
+        assertEquals("Rest your eyes", saved.getString("label"))
+        assertEquals("snoozed", saved.getString("status"))
+        assertEquals(snoozedUntil, saved.getLong("snoozedUntil"))
+    }
+
+    @Test
+    fun customLabelRenameBeforeSnoozeAlsoPreservesBothChanges() {
+        now = 10_000L
+        val configured = reminders(lookAwayDueAt = Long.MAX_VALUE)
+            .put(custom("custom-eye", "Look away", 1_000L, 1))
+        seed(reminders = configured)
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(store.filesDir)
+        val engine = ReminderEngine(coordinator, clock, eventIds)
+        engine.reconcile(now)
+        val renamed = savedSettings()
+        renamed.getJSONArray("reminders").getJSONObject(4).put("label", "Rest your eyes")
+        val snoozedUntil = now + 10 * 60_000L
+        val renamedFirst = CountDownLatch(1)
+
+        val rename = thread {
+            coordinator.saveSettings(renamed.toString())
+            renamedFirst.countDown()
+        }
+        val action = thread {
+            renamedFirst.await()
+            engine.snooze("custom-eye", snoozedUntil)
+        }
+        rename.join()
+        action.join()
+
+        val saved = savedReminder("custom-eye")
+        assertEquals("Rest your eyes", saved.getString("label"))
+        assertEquals("snoozed", saved.getString("status"))
+        assertEquals(snoozedUntil, saved.getLong("snoozedUntil"))
+    }
+
+    @Test
+    fun scheduleChangingSaveUsesItsRecomputedDeadlineInsteadOfCommittedSnooze() {
+        now = 10_000L
+        val configured = reminders(lookAwayDueAt = Long.MAX_VALUE)
+            .put(custom("custom-eye", "Look away", 1_000L, 1))
+        seed(reminders = configured)
+        val changedSchedule = savedSettings()
+        changedSchedule.getJSONArray("reminders").getJSONObject(4)
+            .put("label", "Rest your eyes")
+            .put("intervalMinutes", 5)
+            .put("status", "scheduled")
+            .put("nextDueAt", now + 5 * 60_000L)
+            .remove("snoozedUntil")
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(store.filesDir)
+        val engine = ReminderEngine(coordinator, clock, eventIds)
+        engine.reconcile(now)
+        engine.snooze("custom-eye", now + 10 * 60_000L)
+
+        coordinator.saveSettings(changedSchedule.toString())
+
+        val saved = savedReminder("custom-eye")
+        assertEquals("Rest your eyes", saved.getString("label"))
+        assertEquals(5, saved.getInt("intervalMinutes"))
+        assertEquals("scheduled", saved.getString("status"))
+        assertEquals(now + 5 * 60_000L, saved.getLong("nextDueAt"))
+        assertFalse(saved.has("snoozedUntil"))
     }
 
     @Test
@@ -382,6 +502,20 @@ class ReminderEngineTest {
         .put("intervalMinutes", intervalMinutes)
         .put("nextDueAt", dueAt)
         .put("status", if (enabled) "scheduled" else "disabled")
+
+    private fun custom(
+        id: String,
+        label: String,
+        dueAt: Long,
+        intervalMinutes: Int,
+    ) = JSONObject()
+        .put("id", id)
+        .put("kind", "custom")
+        .put("label", label)
+        .put("enabled", true)
+        .put("intervalMinutes", intervalMinutes)
+        .put("nextDueAt", dueAt)
+        .put("status", "scheduled")
 
     private fun activity(action: String, occurredAt: Long, reminderId: String) = JSONObject()
         .put("id", "history-$occurredAt")
