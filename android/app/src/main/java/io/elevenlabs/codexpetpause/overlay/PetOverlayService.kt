@@ -94,6 +94,7 @@ internal class OverlayGestureDispatcher(
 }
 
 class PetOverlayService : Service() {
+    private var unsubscribeStateRefresh: (() -> Unit)? = null
     private enum class SurfaceMode { PET, MENU, BUBBLE }
 
     private lateinit var windowManager: WindowManager
@@ -118,6 +119,9 @@ class PetOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        unsubscribeStateRefresh = PetOverlayStateRefreshBus.subscribe {
+            Handler(Looper.getMainLooper()).post { refreshState() }
+        }
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
         mainHandler = Handler(Looper.getMainLooper())
@@ -183,6 +187,8 @@ class PetOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        unsubscribeStateRefresh?.invoke()
+        unsubscribeStateRefresh = null
         reminderDelivery.stopLiveTimer()
         reminderScope.cancel()
         removeAllOverlayViews()

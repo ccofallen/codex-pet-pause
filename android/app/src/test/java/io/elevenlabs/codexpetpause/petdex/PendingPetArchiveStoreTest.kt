@@ -172,6 +172,32 @@ class PendingPetArchiveStoreTest {
     }
 
     @Test
+    fun failedPhysicalDeletionIsTombstonedAndCannotBlockTheNextFifoClaim() {
+        var deletionFails = true
+        val store = PendingPetArchiveStore(
+            temporary.root,
+            maxArchiveBytes = 32,
+            deleteFile = { file ->
+                if (deletionFails && file.name.endsWith(".ack")) false else file.delete()
+            },
+        )
+        val first = store.accept(ByteArrayInputStream(validZip(8)), "application/zip", "one.zip")
+        val second = store.accept(ByteArrayInputStream(validZip(8)), "application/zip", "two.zip")
+        val queue = PendingPetImportQueue(store)
+        assertEquals(first.token, queue.nextAnnouncement())
+        queue.claim(first.token)
+
+        assertEquals(second.token, queue.finish(first.token, PendingArchiveOutcome.IMPORTED))
+        assertEquals(listOf(second.token), store.pendingTokens())
+        val directory = File(temporary.root, "pending-pet-archives")
+        assertTrue(directory.listFiles().orEmpty().any { it.name.endsWith(".ack") })
+
+        deletionFails = false
+        store.pendingTokens()
+        assertFalse(directory.listFiles().orEmpty().any { it.name.endsWith(".ack") })
+    }
+
+    @Test
     fun PetdexPolicyAllowsOnlyExactHttpsSiteAndZipDownloads() {
         assertTrue(PetdexSecurityPolicy.isAllowedPage("https://petdex.dev/"))
         assertTrue(PetdexSecurityPolicy.isAllowedPage("https://petdex.dev/pets/momo"))

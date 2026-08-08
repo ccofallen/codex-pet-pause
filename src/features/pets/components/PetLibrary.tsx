@@ -43,6 +43,12 @@ type LibraryMessage =
   | { kind: 'saved' | 'deleted'; name: string }
   | { kind: 'selected' };
 
+type PreviewSource = { kind: 'manual' } | { kind: 'petdex'; token: string };
+interface ImportPreviewState {
+  pet: StoredCodexPet;
+  source: PreviewSource;
+}
+
 function importErrorMessage(
   code: PetImportErrorCode,
   details: Readonly<Record<string, string | number>>,
@@ -125,14 +131,15 @@ export function PetLibrary({
   const importHelpButtonRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const importRequestRef = useRef(0);
-  const pendingArchiveTokenRef = useRef<string | undefined>(undefined);
   const importHelpId = useId();
   const importHeadingId = useId();
-  const [preview, setPreview] = useState<StoredCodexPet>();
+  const [previewState, setPreviewState] = useState<ImportPreviewState>();
+  const preview = previewState?.pet;
   const [petToDelete, setPetToDelete] = useState<StoredCodexPet>();
   const [error, setError] = useState<LibraryError>();
   const [message, setMessage] = useState<LibraryMessage>();
   const [pending, setPending] = useState(false);
+  const [petdexActive, setPetdexActive] = useState(false);
   const [importHelpOpen, setImportHelpOpen] = useState(false);
 
   useEffect(() => () => {
@@ -163,13 +170,12 @@ export function PetLibrary({
   const closePreview = (): void => {
     if (pending) return;
     importRequestRef.current += 1;
-    const pendingArchiveToken = pendingArchiveTokenRef.current;
-    pendingArchiveTokenRef.current = undefined;
-    setPreview(undefined);
-    if (pendingArchiveToken !== undefined && androidImport !== undefined) {
-      void androidImport.completePendingArchive(pendingArchiveToken, 'cancelled').catch(() => {
-        setError({ kind: 'petdex-download' });
-      });
+    const source = previewState?.source;
+    setPreviewState(undefined);
+    if (source?.kind === 'petdex' && androidImport !== undefined) {
+      void androidImport.completePendingArchive(source.token, 'cancelled')
+        .catch(() => setError({ kind: 'petdex-download' }))
+        .finally(() => setPetdexActive(false));
     }
     queueMicrotask(() => importTriggerRef.current?.focus());
   };
@@ -182,6 +188,7 @@ export function PetLibrary({
 
   const processFiles = useCallback(async (
     files: File[],
+    source: PreviewSource = { kind: 'manual' },
   ): Promise<'preview' | 'rejected' | 'stale'> => {
     const request = importRequestRef.current + 1;
     importRequestRef.current = request;
@@ -227,7 +234,7 @@ export function PetLibrary({
         setError({ kind: 'import', code: 'reserved-id', details: {} });
         return 'rejected';
       }
-      setPreview(imported);
+      setPreviewState({ pet: imported, source });
       return 'preview';
     } catch (reason) {
       if (request !== importRequestRef.current) return 'stale';
@@ -241,7 +248,7 @@ export function PetLibrary({
   useEffect(() => {
     if (androidImport !== undefined) {
       return androidImport.subscribe(({ token }) => {
-        pendingArchiveTokenRef.current = token;
+        setPetdexActive(true);
         setError(undefined);
         setMessage(undefined);
         void (async () => {
@@ -250,17 +257,17 @@ export function PetLibrary({
             archive = await androidImport.consumePendingArchive(token);
           } catch {
             setError({ kind: 'petdex-download' });
-            pendingArchiveTokenRef.current = undefined;
             await androidImport.completePendingArchive(token, 'retry').catch(() => undefined);
+            setPetdexActive(false);
             return;
           }
-          const result = await processFiles([archive]);
+          const result = await processFiles([archive], { kind: 'petdex', token });
           if (result === 'preview') return;
-          pendingArchiveTokenRef.current = undefined;
           await androidImport.completePendingArchive(
             token,
             result === 'rejected' ? 'rejected' : 'retry',
           ).catch(() => undefined);
+          setPetdexActive(false);
         })();
       });
     }
@@ -275,6 +282,7 @@ export function PetLibrary({
   }, [androidImport, processFiles]);
 
   const openPetdex = (): void => {
+    if (androidImport !== undefined && (pending || petdexActive)) return;
     setError(undefined);
     setMessage(undefined);
     if (androidImport !== undefined) {
@@ -289,7 +297,7 @@ export function PetLibrary({
   };
 
   const chooseAndroidFiles = (): void => {
-    if (androidImport === undefined) return;
+    if (androidImport === undefined || pending || petdexActive) return;
     const request = importRequestRef.current + 1;
     importRequestRef.current = request;
     setError(undefined);
@@ -314,6 +322,7 @@ export function PetLibrary({
     setPending(true);
     setError(undefined);
     try {
+      const source = previewState?.source;
       if (androidImport === undefined) {
         await controller.savePet(preview);
       } else {
@@ -323,18 +332,18 @@ export function PetLibrary({
           : { ...preview, importedAt: existing.importedAt });
       }
       const displayName = preview.displayName;
-      const pendingArchiveToken = pendingArchiveTokenRef.current;
-      pendingArchiveTokenRef.current = undefined;
-      setPreview(undefined);
+      setPreviewState(undefined);
       setMessage(androidImport === undefined
         ? { kind: 'saved', name: displayName }
         : { kind: 'selected' });
       queueMicrotask(() => importTriggerRef.current?.focus());
-      if (pendingArchiveToken !== undefined && androidImport !== undefined) {
+      if (source?.kind === 'petdex' && androidImport !== undefined) {
         try {
-          await androidImport.completePendingArchive(pendingArchiveToken, 'imported');
+          await androidImport.completePendingArchive(source.token, 'imported');
         } catch (reason) {
           console.warn('Committed Android pet archive acknowledgement will retry later', reason);
+        } finally {
+          setPetdexActive(false);
         }
       }
     } catch {
@@ -433,6 +442,7 @@ export function PetLibrary({
             className={androidImport === undefined ? undefined : 'android-pet-import-action'}
             data-testid={androidImport === undefined ? undefined : 'android-pet-import-action'}
             type="button"
+            disabled={androidImport !== undefined && (pending || petdexActive)}
             onClick={openPetdex}
           >
             {t('pet.import.petdexAction')}
@@ -442,6 +452,7 @@ export function PetLibrary({
             className={androidImport === undefined ? undefined : 'android-pet-import-action'}
             data-testid={androidImport === undefined ? undefined : 'android-pet-import-action'}
             type="button"
+            disabled={androidImport !== undefined && (pending || petdexActive)}
             onClick={androidImport === undefined ? () => inputRef.current?.click() : chooseAndroidFiles}
           >
             {t('pet.import.action')}

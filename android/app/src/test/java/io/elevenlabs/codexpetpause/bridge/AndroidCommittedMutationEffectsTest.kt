@@ -23,4 +23,16 @@ class AndroidCommittedMutationEffectsTest {
         assertEquals("committed-snapshot", result.snapshot)
         assertNotNull(result.refreshWarning)
     }
+
+    @Test
+    fun eventFailureStillReturnsTheCommittedSnapshotToTheBridge() {
+        val result = AndroidCommittedMutationEffects.run(
+            mutation = { "committed-snapshot" },
+            emitSnapshot = { throw IOException("listener unavailable") },
+            refreshOverlay = null,
+        )
+
+        assertEquals("committed-snapshot", result.snapshot)
+        assertNotNull(result.eventWarning)
+    }
 }

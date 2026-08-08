@@ -214,3 +214,34 @@ All commands used the documented JDK/Android SDK environment and hard timeouts o
 - 95 actionable tasks: 3 executed, 92 up-to-date.
 
 No Capacitor sync/regeneration or generated web build was run. The existing device/emulator interaction gap remains unchanged.
+
+## Remaining review findings resolved (2026-08-08)
+
+- Removed the Petdex secondary process. Petdex remains a dedicated, non-exported Activity with a plain bridge-free WebView; no Capacitor bridge or JavaScript interface is attached.
+- Expanded document-start hardening to immutable Worker, SharedWorker, ServiceWorker registration, WebSocket, WebSocketStream, WebTransport, RTCPeerConnection, webkitRTCPeerConnection, and EventSource blockers. JavaScript remains disabled when document-start injection is unavailable. The exact HTTPS Petdex request and lifecycle-scoped ServiceWorker allowlist remains in force.
+- Changed pending archive acknowledgement to an atomic rename-to-tombstone transition. Physical deletion is best-effort and cleanup retries later, so deletion failure cannot block FIFO progression while tombstones remain inside aggregate quota accounting.
+- Added one bounded transparent TypeScript acknowledgement retry and source-bound preview state. Android import controls are disabled while a Petdex claim is active, and manual previews cannot acknowledge Petdex tokens.
+- Native mutations now return a strictly parsed committed snapshot plus the observable refresh warning. Android applies that snapshot directly without depending on event delivery.
+- Added a same-process overlay state refresh bus for a running service and two bounded foreground-service command retries. A stopped service continues to read persisted state on its next start; exhausted retries remain logged as recoverable warnings.
+- Existing dotted pet IDs continue through the shared/native/path grammar without traversal or separator relaxation.
+- Desktop import controls and post-delete focus behavior remain unchanged.
+
+## TDD and bounded validation evidence
+
+RED evidence:
+- Focused web regression run initially failed 6 targeted tests covering process isolation, FIFO acknowledgement retry, typed commit results, controller state application, source-bound previewing, and Android control serialization.
+- Focused native regression compilation initially failed only for the newly specified retrier, refresh bus, and tombstone deletion seam.
+
+GREEN evidence:
+- `npm run test:run -- src/android/infrastructure/petdexIsolation.test.ts src/android/infrastructure/androidPetImport.test.ts src/android/bridge/androidHost.test.ts src/app/appController.externalState.test.ts src/features/pets/components/PetLibrary.test.tsx`: 5 files, 70 tests passed.
+- `npm run test:run`: 67 files, 793 tests passed.
+- `npm run typecheck`: passed.
+- `./gradlew testDebugUnitTest --tests '*PetdexActivitySecurityTest' --tests '*PendingPetArchiveStoreTest' --tests '*AndroidCommittedMutationEffectsTest' --tests '*AndroidOverlayRefreshRetrierTest' --tests '*PetOverlayStateRefreshBusTest'`: BUILD SUCCESSFUL.
+- `./gradlew testDebugUnitTest`: BUILD SUCCESSFUL.
+- `./gradlew assembleDebug`: BUILD SUCCESSFUL.
+- Native commands used the supplied JDK 21 and Android SDK environment and hard timeouts. No command timed out or hung.
+- Capacitor sync/regeneration was not run.
+
+## Gaps
+
+- None found in the requested bounded automated validation.

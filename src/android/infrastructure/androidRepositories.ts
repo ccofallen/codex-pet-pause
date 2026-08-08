@@ -3,7 +3,7 @@ import type { HistoryRepository } from '../../infrastructure/historyRepository';
 import type { PetRepository } from '../../infrastructure/petRepository';
 import type { SettingsRepository } from '../../infrastructure/settingsRepository';
 import type { StoredCodexPet } from '../../features/pets/domain/types';
-import type { AndroidHost, AndroidPetWrite } from '../bridge/androidHost';
+import type { AndroidHost, AndroidHostSnapshot, AndroidPetWrite } from '../bridge/androidHost';
 
 function parseRecord(value: string, message: string): Record<string, unknown> {
   try {
@@ -74,6 +74,19 @@ function parsePet(asset: { id: string; metadataJson: string; spritesheetBase64: 
     id: asset.id,
     spritesheet: new Blob([decodeBase64(asset.spritesheetBase64)], { type: 'image/webp' }),
   } as StoredCodexPet;
+}
+
+export function parseAndroidCommittedAppState(snapshot: AndroidHostSnapshot): {
+  settings: AppSettings;
+  pets: StoredCodexPet[];
+} {
+  if (snapshot.settingsJson === null) throw new Error('Committed Android state has no settings');
+  const settings = parseRecord(snapshot.settingsJson, 'invalid Android settings');
+  if (settings.schemaVersion !== 5) throw new Error('invalid Android settings');
+  return {
+    settings: settings as unknown as AppSettings,
+    pets: snapshot.pets.map(parsePet),
+  };
 }
 
 export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepository {

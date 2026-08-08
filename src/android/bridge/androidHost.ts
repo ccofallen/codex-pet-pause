@@ -81,8 +81,13 @@ export interface AndroidPetImportHost {
   pickPetFiles(): Promise<AndroidPetFileSelection>;
   consumePendingArchive(token: string): Promise<AndroidNativePetFile>;
   completePendingArchive(token: string, outcome: AndroidPendingArchiveOutcome): Promise<void>;
-  persistValidatedPet(input: AndroidPetWrite): Promise<void>;
+  persistValidatedPet(input: AndroidPetWrite): Promise<AndroidPetPersistResult | void>;
   subscribePetArchives(listener: (event: AndroidPetArchiveEvent) => void): () => void;
+}
+
+export interface AndroidPetPersistResult {
+  snapshot: AndroidHostSnapshot;
+  refreshWarning: boolean;
 }
 
 export interface AndroidControlHost extends AndroidHost, AndroidPetImportHost {
@@ -95,6 +100,10 @@ export interface AndroidControlHost extends AndroidHost, AndroidPetImportHost {
   hidePet(): Promise<AndroidCapabilities>;
   quit(): Promise<AndroidCapabilities>;
   subscribeCapabilities(listener: (event: AndroidCapabilitiesEvent) => void): () => void;
+}
+
+export interface AndroidTypedControlHost extends AndroidControlHost {
+  persistValidatedPet(input: AndroidPetWrite): Promise<AndroidPetPersistResult>;
 }
 
 export interface AndroidHostPlugin {
@@ -123,7 +132,7 @@ export interface AndroidHostPlugin {
     token: string;
     outcome: AndroidPendingArchiveOutcome;
   }): Promise<void>;
-  persistValidatedPet?(options: AndroidPetWrite): Promise<void>;
+  persistValidatedPet?(options: AndroidPetWrite): Promise<unknown>;
   addListener(
     eventName: 'stateChanged' | 'capabilitiesChanged' | 'petArchiveReady',
     listener: (event: unknown) => void,
@@ -193,7 +202,7 @@ function parseAndroidCapabilities(value: unknown): AndroidCapabilities {
   return record as unknown as AndroidCapabilities;
 }
 
-export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost {
+export function createAndroidHost(plugin: AndroidHostPlugin): AndroidTypedControlHost {
   const callControl = async (method: keyof Pick<AndroidHostPlugin,
     'getCapabilities' | 'requestNotifications' | 'openNotificationSettings' | 'openOverlaySettings'
     | 'startService' | 'showPet' | 'hidePet' | 'quit'>): Promise<AndroidCapabilities> => {
@@ -282,14 +291,23 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
       await plugin.completePendingArchive({ token, outcome });
     },
 
-    async persistValidatedPet(input: AndroidPetWrite): Promise<void> {
+    async persistValidatedPet(input: AndroidPetWrite): Promise<AndroidPetPersistResult> {
       requireSafePetId(input.id);
       validateAndroidPetMetadataJson(input.metadataJson, input.id);
       validateAndroidSpritesheetBase64(input.spritesheetBase64);
       if (plugin.persistValidatedPet === undefined) {
         throw new Error('Android host method unavailable: persistValidatedPet');
       }
-      await plugin.persistValidatedPet(input);
+      const value = await plugin.persistValidatedPet(input);
+      if (typeof value !== 'object' || value === null) {
+        throw new Error('invalid Android pet import result');
+      }
+      const record = value as Record<string, unknown>;
+      const snapshot = parseAndroidHostSnapshot(record.snapshot);
+      if (snapshot === null || typeof record.refreshWarning !== 'boolean') {
+        throw new Error('invalid Android pet import result');
+      }
+      return { snapshot, refreshWarning: record.refreshWarning };
     },
 
     subscribe(listener): () => void {
@@ -360,6 +378,6 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
   };
 }
 
-export function getAndroidHost(): AndroidControlHost {
+export function getAndroidHost(): AndroidTypedControlHost {
   return createAndroidHost(registerPlugin<AndroidHostPlugin>('AndroidHost'));
 }

@@ -35,12 +35,24 @@ class PetdexActivitySecurityTest {
     }
 
     @Test
-    fun websocketCapabilityIsDisabledAtDocumentStartOrJavascriptIsDisabled() {
+    fun workerSocketAndLocalNetworkCapabilitiesAreFrozenBeforePageJavascript() {
         assertTrue(PetdexSecurityPolicy.shouldEnableJavaScript(documentStartScriptSupported = true))
         assertFalse(PetdexSecurityPolicy.shouldEnableJavaScript(documentStartScriptSupported = false))
-        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("WebSocket"))
-        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("WebSocketStream"))
-        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("WebTransport"))
+        listOf(
+            "Worker",
+            "SharedWorker",
+            "WebSocket",
+            "WebSocketStream",
+            "WebTransport",
+            "RTCPeerConnection",
+            "webkitRTCPeerConnection",
+            "EventSource",
+        ).forEach { capability ->
+            assertTrue(capability, PetdexSecurityPolicy.webSocketBlockScript.contains("'$capability'"))
+        }
+        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("ServiceWorkerContainer"))
+        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("register"))
+        assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("writable: false"))
         assertTrue(PetdexSecurityPolicy.webSocketBlockScript.contains("configurable: false"))
     }
 

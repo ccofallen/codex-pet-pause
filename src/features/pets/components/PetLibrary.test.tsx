@@ -274,6 +274,40 @@ test('closes a Petdex preview after committed activation and acknowledges it as 
   expect(screen.getByRole('status')).toHaveTextContent('当前宠物已切换');
 });
 
+test('binds the Petdex token to its own preview and blocks manual import interleaving', async () => {
+  const user = userEvent.setup();
+  const manualSelection = deferred<File[]>();
+  const petdexClaim = deferred<File>();
+  let listener: ((event: AndroidPetImportEvent) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  await renderLibrary({
+    androidImport: fakeAndroidImport({
+      pickFiles: () => manualSelection.promise,
+      consumePendingArchive: () => petdexClaim.promise,
+      completePendingArchive,
+      subscribe: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }),
+  });
+
+  await user.click(screen.getByRole('button', { name: '导入 Codex 宠物' }));
+  await act(async () => listener?.({ type: 'pet-archive-ready', token: 'petdex-token' }));
+  expect(screen.getByRole('button', { name: '导入 Codex 宠物' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '浏览 Petdex 并自动导入' })).toBeDisabled();
+
+  await act(async () => manualSelection.resolve([manifestFile, atlasFile]));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).not.toHaveBeenCalled();
+
+  await act(async () => petdexClaim.resolve(zipFile));
+  expect(await screen.findByRole('dialog', { name: '宠物安全预览' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(completePendingArchive).toHaveBeenCalledWith('petdex-token', 'cancelled');
+});
+
 test('places Android manual import below Petdex with equal full-width actions', async () => {
   await renderLibrary({ androidImport: fakeAndroidImport() });
 

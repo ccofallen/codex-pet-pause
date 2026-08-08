@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useAppSnapshot } from '../../app/AppProvider';
+import { useAppController, useAppSnapshot } from '../../app/AppProvider';
 import { InsightsPanel } from '../../features/insights/InsightsPanel';
 import { PetLibrary } from '../../features/pets/components/PetLibrary';
 import { Dashboard } from '../../features/reminders/components/Dashboard';
@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n/I18nProvider';
 import type { AndroidControlHost } from '../bridge/androidHost';
 import { AndroidCapabilityStatus } from './AndroidCapabilityStatus';
 import { createAndroidPetImport } from '../infrastructure/androidPetImport';
+import { parseAndroidCommittedAppState } from '../infrastructure/androidRepositories';
 
 type AndroidView = 'companion' | 'reminders' | 'pet' | 'settings';
 
@@ -20,11 +21,14 @@ const navigation: readonly { view: AndroidView; label: 'nav.companion' | 'nav.re
 
 export function AndroidApp({ host }: { host?: AndroidControlHost }) {
   const { t } = useI18n();
+  const controller = useAppController();
   const snapshot = useAppSnapshot();
   const [view, setView] = useState<AndroidView>('settings');
   const petImport = useMemo(() => host === undefined
     ? undefined
-    : createAndroidPetImport(host), [host]);
+    : createAndroidPetImport(host, (committedSnapshot) => {
+      controller.applyCommittedState?.(parseAndroidCommittedAppState(committedSnapshot));
+    }), [controller, host]);
 
   if (!snapshot.ready) {
     return (

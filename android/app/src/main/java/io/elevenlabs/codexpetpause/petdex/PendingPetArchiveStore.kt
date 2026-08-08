@@ -22,6 +22,7 @@ internal class PendingPetArchiveStore(
     private val maxPendingArchives: Int = DEFAULT_MAX_PENDING_ARCHIVES,
     private val archiveTtlMillis: Long = DEFAULT_ARCHIVE_TTL_MILLIS,
     private val clockMillis: () -> Long = System::currentTimeMillis,
+    private val deleteFile: (File) -> Boolean = { it.delete() },
 ) {
     private val directory = File(rootDirectory, "pending-pet-archives")
     private val safeToken = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -41,7 +42,10 @@ internal class PendingPetArchiveStore(
             cleanupLocked()
             val pending = pendingFilesLocked()
             if (pending.size >= maxPendingArchives) throw PendingArchiveQuotaExceeded()
-            val committedBytes = pending.sumOf(File::length)
+            val committedBytes = directory.listFiles()
+                ?.filter(File::isFile)
+                ?.sumOf(File::length)
+                ?: 0L
             if (committedBytes >= maxAggregateBytes) throw PendingArchiveQuotaExceeded()
 
             val token = UUID.randomUUID().toString()
@@ -104,7 +108,9 @@ internal class PendingPetArchiveStore(
         requireSafeToken(token)
         val file = archiveFile(token)
         if (!file.isFile) throw PendingArchiveMissing()
-        if (!file.delete()) throw IOException("Could not remove acknowledged pet archive")
+        val tombstone = File(directory, ".$token.ack")
+        if (!file.renameTo(tombstone)) throw IOException("Could not release acknowledged pet archive")
+        deleteFile(tombstone)
     }
 
     fun pendingTokens(): List<String> = synchronized(STORE_LOCK) {
@@ -132,10 +138,11 @@ internal class PendingPetArchiveStore(
             val token = file.name.removeSuffix(".zip")
             if (!file.isFile
                 || file.name.endsWith(".tmp")
+                || file.name.endsWith(".ack")
                 || !file.name.endsWith(".zip")
                 || !safeToken.matches(token)
                 || file.lastModified() <= cutoff) {
-                file.delete()
+                deleteFile(file)
             }
         }
     }

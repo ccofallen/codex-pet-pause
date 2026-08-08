@@ -49,13 +49,38 @@ internal object PetdexSecurityPolicy {
     val webSocketBlockScript = """
         (() => {
           'use strict';
-          const blocked = (name) => class {
-            constructor() { throw new DOMException(name + ' is disabled', 'SecurityError'); }
+          const unavailable = (name) => function () {
+            throw new DOMException(name + ' is unavailable in Petdex', 'SecurityError');
           };
-          for (const name of ['WebSocket', 'WebSocketStream', 'WebTransport']) {
-            Object.defineProperty(globalThis, name, {
-              value: blocked(name), writable: false, configurable: false, enumerable: false
+          const lock = (target, name, value) => {
+            Object.defineProperty(target, name, {
+              value,
+              writable: false,
+              configurable: false,
+              enumerable: false
             });
+          };
+          for (const name of [
+            'Worker',
+            'SharedWorker',
+            'WebSocket',
+            'WebSocketStream',
+            'WebTransport',
+            'RTCPeerConnection',
+            'webkitRTCPeerConnection',
+            'EventSource'
+          ]) {
+            lock(globalThis, name, unavailable(name));
+          }
+          if ('ServiceWorkerContainer' in globalThis) {
+            lock(
+              globalThis.ServiceWorkerContainer.prototype,
+              'register',
+              () => Promise.reject(new DOMException(
+                'ServiceWorker registration is unavailable in Petdex',
+                'SecurityError'
+              ))
+            );
           }
         })();
     """.trimIndent()
@@ -164,9 +189,19 @@ class PetdexActivity : AppCompatActivity() {
         webView.saveState(outState)
     }
 
+    override fun onStart() {
+        super.onStart()
+        configureServiceWorkerPolicy()
+    }
+
+    override fun onStop() {
+        clearServiceWorkerPolicy()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         scope.cancel()
-        serviceWorkerController?.setServiceWorkerClient(denyAllServiceWorkerClient())
+        clearServiceWorkerPolicy()
         webView.stopLoading()
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
@@ -237,9 +272,10 @@ class PetdexActivity : AppCompatActivity() {
         }
     }
 
-    private fun denyAllServiceWorkerClient() = object : ServiceWorkerClient() {
-        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
-            blockedResponse()
+    private fun clearServiceWorkerPolicy() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        serviceWorkerController?.setServiceWorkerClient(null)
+        serviceWorkerController = null
     }
 
     private fun interceptRequest(url: String): WebResourceResponse? =

@@ -29,7 +29,6 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
-            android:process=":petdex"
             android:taskAffinity="${applicationId}.petdex"
             android:label="@string/petdex_title"
             android:theme="@style/AppTheme" />

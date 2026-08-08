@@ -1,8 +1,10 @@
 import type { StoredCodexPet } from '../../features/pets/domain/types';
 import type {
   AndroidNativePetFile,
+  AndroidHostSnapshot,
   AndroidPetArchiveEvent,
   AndroidPetImportHost,
+  AndroidPetPersistResult,
   AndroidPendingArchiveOutcome,
   AndroidPetWrite,
 } from '../bridge/androidHost';
@@ -15,7 +17,7 @@ export interface AndroidPetImport {
   pickFiles(): Promise<File[]>;
   consumePendingArchive(token: string): Promise<File>;
   completePendingArchive(token: string, outcome: AndroidPendingArchiveOutcome): Promise<void>;
-  persistValidatedPet(pet: StoredCodexPet): Promise<void>;
+  persistValidatedPet(pet: StoredCodexPet): Promise<AndroidPetPersistResult | void>;
   subscribe(listener: (event: AndroidPetImportEvent) => void): () => void;
 }
 
@@ -35,7 +37,10 @@ function encodeBase64(bytes: Uint8Array): string {
   return btoa(text);
 }
 
-export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetImport {
+export function createAndroidPetImport(
+  host: AndroidPetImportHost,
+  applyCommittedSnapshot?: (snapshot: AndroidHostSnapshot) => void,
+): AndroidPetImport {
   let listener: ((event: AndroidPetImportEvent) => void) | undefined;
   let activeToken: string | undefined;
   const queuedTokens: string[] = [];
@@ -63,7 +68,11 @@ export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetIm
 
     async completePendingArchive(token, outcome): Promise<void> {
       if (activeToken !== token) throw new Error('Android pending archive is not active');
-      await host.completePendingArchive(token, outcome);
+      try {
+        await host.completePendingArchive(token, outcome);
+      } catch {
+        await host.completePendingArchive(token, outcome);
+      }
       activeToken = undefined;
       if (outcome === 'retry') {
         queuedTokens.length = 0;
@@ -74,7 +83,7 @@ export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetIm
       deliverNext();
     },
 
-    async persistValidatedPet(pet: StoredCodexPet): Promise<void> {
+    async persistValidatedPet(pet: StoredCodexPet): Promise<AndroidPetPersistResult | void> {
       const { spritesheet, ...metadata } = pet;
       const bytes = new Uint8Array(await readAndroidBlobBytes(spritesheet));
       if (bytes.byteLength === 0) throw new Error('empty Android pet spritesheet');
@@ -83,7 +92,9 @@ export function createAndroidPetImport(host: AndroidPetImportHost): AndroidPetIm
         metadataJson: JSON.stringify(metadata),
         spritesheetBase64: encodeBase64(bytes),
       };
-      await host.persistValidatedPet(input);
+      const result = await host.persistValidatedPet(input);
+      if (result !== undefined) applyCommittedSnapshot?.(result.snapshot);
+      return result;
     },
 
     subscribe(nextListener): () => void {

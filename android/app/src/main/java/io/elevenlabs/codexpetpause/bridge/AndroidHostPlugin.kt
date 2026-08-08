@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -23,6 +25,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
+import io.elevenlabs.codexpetpause.overlay.PetOverlayStateRefreshBus
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
 import io.elevenlabs.codexpetpause.petdex.PendingArchiveOutcome
 import io.elevenlabs.codexpetpause.petdex.PendingPetImportQueue
@@ -48,10 +51,17 @@ open class AndroidHostPlugin : Plugin() {
     private lateinit var lifecycle: AndroidServiceLifecycle
     private lateinit var hostLifecycle: AndroidHostLifecycle
     private lateinit var pendingArchiveQueue: PendingPetImportQueue
+    private lateinit var overlayRefreshRetrier: AndroidOverlayRefreshRetrier
 
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
         lifecycle = AndroidServiceLifecycle.forContext(context)
+        val handler = Handler(Looper.getMainLooper())
+        overlayRefreshRetrier = AndroidOverlayRefreshRetrier(
+            command = ::sendOverlayRefreshCommand,
+            schedule = { delayMillis, action -> handler.postDelayed(action, delayMillis) },
+            onExhausted = { error -> Log.w(TAG, "Overlay refresh retries exhausted", error) },
+        )
         pendingArchiveQueue = PendingPetImportQueue(PendingPetArchiveStore(context.cacheDir))
         installResumeBoundary(
             serviceLifecycle = lifecycle,
@@ -303,17 +313,22 @@ open class AndroidHostPlugin : Plugin() {
     @PluginMethod
     fun deletePet(call: PluginCall) {
         val id = call.getString("id") ?: return call.reject("pet id is required")
-        complete(call, "could not delete pet") { coordinator.deletePet(id) }
+        complete(call, "could not delete pet", refreshReminderService = true) { coordinator.deletePet(id) }
     }
 
     @PluginMethod
     fun clearPets(call: PluginCall) =
-        complete(call, "could not clear pets", mutation = coordinator::clearPets)
+        complete(
+            call,
+            "could not clear pets",
+            refreshReminderService = true,
+            mutation = coordinator::clearPets,
+        )
 
     @PluginMethod
     fun selectPet(call: PluginCall) {
         val id = call.getString("id") ?: return call.reject("pet id is required")
-        complete(call, "could not select pet") { coordinator.selectPet(id) }
+        complete(call, "could not select pet", refreshReminderService = true) { coordinator.selectPet(id) }
     }
 
     private fun complete(
@@ -329,13 +344,8 @@ open class AndroidHostPlugin : Plugin() {
                     notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
                 },
                 refreshOverlay = if (refreshReminderService) ({
-                    val state = lifecycle.snapshot()
-                    if (state.serviceActive && state.recoveryAllowed) {
-                        ContextCompat.startForegroundService(
-                            context,
-                            Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
-                        )
-                    }
+                    PetOverlayStateRefreshBus.publish()
+                    overlayRefreshRetrier.refresh()?.let { throw it }
                 }) else null,
             )
         } catch (error: Exception) {
@@ -343,7 +353,19 @@ open class AndroidHostPlugin : Plugin() {
         }
         result.eventWarning?.let { Log.w(TAG, "Committed state event could not be published", it) }
         result.refreshWarning?.let { Log.w(TAG, "Committed state overlay refresh will retry later", it) }
-        call.resolve(JSObject().put("refreshWarning", result.refreshWarning != null))
+        val response = JSObject().put("refreshWarning", result.refreshWarning != null)
+        result.snapshot?.let { response.put("snapshot", JSObject(it)) }
+        call.resolve(response)
+    }
+
+    private fun sendOverlayRefreshCommand() {
+        val state = lifecycle.snapshot()
+        if (state.serviceActive && state.recoveryAllowed) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.STATE_CHANGED),
+            )
+        }
     }
 
     private fun sendServiceCommand(call: PluginCall, command: String) {

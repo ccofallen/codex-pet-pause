@@ -284,7 +284,10 @@ describe('createAndroidHost', () => {
       savePet: async () => undefined,
       deletePet: async () => undefined,
       selectPet: async () => undefined,
-      persistValidatedPet: async (input) => { persisted.push(input); },
+      persistValidatedPet: async (input) => {
+        persisted.push(input);
+        return { snapshot: rawSnapshot, refreshWarning: false };
+      },
       addListener: async () => ({ remove: async () => undefined }),
     };
     const input = {
@@ -303,5 +306,39 @@ describe('createAndroidHost', () => {
     await createAndroidHost(plugin).persistValidatedPet(input);
 
     expect(persisted).toEqual([input]);
+  });
+
+  test('returns a strictly parsed committed snapshot and observable refresh warning', async () => {
+    const committed = {
+      ...rawSnapshot,
+      settingsJson: JSON.stringify({ ...createDefaultSettings(1, 'en'), activePetId: 'builtin-cat' }),
+    };
+    const plugin: AndroidHostPlugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      persistValidatedPet: async () => ({ snapshot: committed, refreshWarning: true }),
+      addListener: async () => ({ remove: async () => undefined }),
+    };
+    const input = {
+      id: 'moon.cat',
+      metadataJson: JSON.stringify({
+        id: 'moon.cat', displayName: 'Moon Cat', spriteVersion: 2,
+        spritesheetFilename: 'spritesheet.webp', importedAt: 10, updatedAt: 20,
+      }),
+      spritesheetBase64: 'YQ==',
+    };
+
+    await expect(createAndroidHost(plugin).persistValidatedPet(input)).resolves.toEqual({
+      snapshot: committed,
+      refreshWarning: true,
+    });
   });
 });
