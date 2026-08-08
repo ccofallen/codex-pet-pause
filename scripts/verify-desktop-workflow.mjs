@@ -14,6 +14,7 @@ const tagPushCondition = "github.event_name=='push'&&startsWith(github.ref,'refs
 const packageArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release --target ${{ matrix.target }}';
 const releaseArtifactValidationRun = 'node scripts/verify-release-artifacts.mjs release-assets';
 const tagVersionRun = 'node scripts/verify-release-tag.mjs "${{ github.ref_name }}"';
+const coordinatedTagVersionRun = 'node scripts/verify-release-tag.mjs "${{ inputs.release_tag }}"';
 const packagedAppSmokeRun = 'npm run desktop:smoke:packaged-app';
 const publishRun = 'if gh release view "$GITHUB_REF_NAME"; then\n  gh release view "$GITHUB_REF_NAME" --json assets --jq \'.assets[].name\' | while IFS= read -r asset; do\n    case "$asset" in\n      Codex-Pet-Pause-*-mac-*.dmg|Codex-Pet-Pause-*-windows-*.exe|Codex-Pet-Pause-*-linux-*.AppImage|Codex-Pet-Pause-*-linux-*.deb)\n        gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes\n        ;;\n    esac\n  done\n  gh release upload "$GITHUB_REF_NAME" release-assets/*\nelse\n  gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME"\nfi\n';
 
@@ -80,9 +81,11 @@ function verifyDesktopProducerWorkflow(workflow) {
 
   for (const jobName of ['package', 'release']) {
     const steps = jobs[jobName]?.steps ?? [];
-    const tag = steps.find((step) => step.run === 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"');
-    if (tag?.env?.RELEASE_TAG !== '${{ inputs.release_tag }}') {
-      failures.push(`${jobName} job must verify the coordinated release tag`);
+    const tagIndexes = steps
+      .map((step, index) => step.run === coordinatedTagVersionRun ? index : -1)
+      .filter((index) => index >= 0);
+    if (tagIndexes.length !== 1) {
+      failures.push(`${jobName} job must verify the coordinated release tag with a portable input expression`);
     }
   }
   const releaseSteps = jobs.release?.steps ?? [];
@@ -127,9 +130,8 @@ function verifyDesktopProducerWorkflow(workflow) {
   for (const job of Object.values(compatibility.jobs)) {
     for (const step of job?.steps ?? []) {
       if (actionVersions.has(step.uses)) step.uses = actionVersions.get(step.uses);
-      if (step.run === 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"') {
+      if (step.run === coordinatedTagVersionRun) {
         step.run = tagVersionRun;
-        delete step.env;
       }
     }
   }
