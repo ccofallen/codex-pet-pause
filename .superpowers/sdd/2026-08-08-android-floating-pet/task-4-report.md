@@ -66,3 +66,33 @@ JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID
 Result: `BUILD SUCCESSFUL`; complete `testDebugUnitTest` passed.
 
 The follow-up fixes are committed in the final SHA reported with this task.
+
+## Repair round 1
+
+The earlier SDK concern is resolved using the supplied JDK 21 and Android SDK paths. This round added tests before production changes for all requested repairs: drag-end-only snapping, 9dp inward detach, outward-then-inward final direction, active-pointer CANCEL, second-pointer filtering, expired pending tap plus new DOWN, invalid/degenerate safe bounds, portrait/landscape Insets, and small/medium/large pet sizes.
+
+RED evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+The first repair run failed during test compilation because `POINTER_DOWN` and `POINTER_UP` were not yet present in `MotionAction`.
+
+After the minimal production implementation compiled, the focused suite reported 20 tests with one failure: the MOVE assertion expected an unclamped x coordinate, while the required clamp behavior produced x=328 with `Attachment.Free`. Correcting that test expectation produced GREEN.
+
+GREEN evidence:
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH ./gradlew testDebugUnitTest --tests '*OverlayGeometryTest' --tests '*OverlayGestureInterpreterTest'
+```
+
+Result: `BUILD SUCCESSFUL`; all 20 focused geometry/gesture tests passed.
+
+```text
+JAVA_HOME=/private/tmp/codex-jdk21 ANDROID_HOME=/private/tmp/android-sdk ANDROID_SDK_ROOT=/private/tmp/android-sdk PATH=/private/tmp/codex-jdk21/bin:$PATH npm run android:test:native
+```
+
+Result: `BUILD SUCCESSFUL`; complete native unit tests passed.
+
+Implementation and test commit SHA: `7cb16fb`.
