@@ -72,6 +72,11 @@ internal object PetdexSecurityPolicy {
           ]) {
             lock(globalThis, name, unavailable(name));
           }
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations()
+              .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+              .catch(() => undefined);
+          }
           if ('ServiceWorkerContainer' in globalThis) {
             lock(
               globalThis.ServiceWorkerContainer.prototype,
@@ -137,6 +142,7 @@ class PetdexActivity : AppCompatActivity() {
         WebView.setWebContentsDebuggingEnabled(false)
         webView = WebView(this)
         setContentView(webView)
+        configureServiceWorkerPolicy()
         val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         val webSocketsBlocked = documentStartSupported && runCatching {
             WebViewCompat.addDocumentStartJavaScript(
@@ -168,7 +174,6 @@ class PetdexActivity : AppCompatActivity() {
         webView.removeJavascriptInterface("accessibilityTraversal")
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = secureWebViewClient()
-        configureServiceWorkerPolicy()
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
             if (!PetdexSecurityPolicy.isAllowedDownload(url, mimeType.orEmpty(), name)) {
@@ -189,19 +194,8 @@ class PetdexActivity : AppCompatActivity() {
         webView.saveState(outState)
     }
 
-    override fun onStart() {
-        super.onStart()
-        configureServiceWorkerPolicy()
-    }
-
-    override fun onStop() {
-        clearServiceWorkerPolicy()
-        super.onStop()
-    }
-
     override fun onDestroy() {
         scope.cancel()
-        clearServiceWorkerPolicy()
         webView.stopLoading()
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
@@ -262,20 +256,16 @@ class PetdexActivity : AppCompatActivity() {
             controller.serviceWorkerWebSettings.apply {
                 allowContentAccess = false
                 allowFileAccess = false
-                blockNetworkLoads = false
+                blockNetworkLoads = true
                 cacheMode = WebSettings.LOAD_NO_CACHE
             }
-            controller.setServiceWorkerClient(object : ServiceWorkerClient() {
-                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
-                    interceptRequest(request.url.toString())
-            })
+            controller.setServiceWorkerClient(denyAllServiceWorkerClient())
         }
     }
 
-    private fun clearServiceWorkerPolicy() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-        serviceWorkerController?.setServiceWorkerClient(null)
-        serviceWorkerController = null
+    private fun denyAllServiceWorkerClient() = object : ServiceWorkerClient() {
+        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
+            blockedResponse()
     }
 
     private fun interceptRequest(url: String): WebResourceResponse? =

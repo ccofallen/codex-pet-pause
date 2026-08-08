@@ -152,7 +152,7 @@ open class AndroidHostPlugin : Plugin() {
         val outcome = call.getString("outcome") ?: return call.reject("pending archive outcome is required")
         try {
             val next = pendingArchiveQueue.finish(token, PendingArchiveOutcome.fromWire(outcome))
-            call.resolve()
+            call.resolve(JSObject().put("nextToken", next))
             if (next != null) announcePendingArchive(next)
         } catch (error: Exception) {
             call.reject("could not complete pending pet archive", error)

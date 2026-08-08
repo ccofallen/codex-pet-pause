@@ -245,3 +245,27 @@ GREEN evidence:
 ## Gaps
 
 - None found in the requested bounded automated validation.
+
+## Final ServiceWorker and acknowledgement findings resolved (2026-08-08)
+
+- Petdex now installs a process-lifetime, deny-by-default `ServiceWorkerClient` before Petdex JavaScript can be enabled. ServiceWorker network loads are blocked globally for the app process and the client is never reset to null when the Activity stops or is destroyed.
+- Existing Petdex ServiceWorker registrations are asynchronously unregistered at document start as defense-in-depth. Security does not depend on that cleanup: pre-existing controllers remain behind the native process-wide network denial.
+- Terminal pending-archive completion is idempotent and response-loss safe. Successful release creates a zero-byte `.done` record; crash-left `.ack` files are promoted during cleanup; a missing file for the current claim is reconciled as completed.
+- Completion records use the existing 24-hour cleanup boundary and are capped at 16 entries. Archive bytes and failed physical-deletion tombstones remain in aggregate quota accounting.
+- Known completed-token replay returns the reconciled current/next FIFO token without changing a different active claim. Unknown or conflicting tokens continue to fail safely.
+- Native completion responses include `nextToken`, and duplicate announcements remain deduplicated by the TypeScript adapter. A lost first response followed by idempotent retry clears the old active token and delivers the next token once.
+
+### Final TDD evidence
+
+RED:
+- Focused native run: 7/7 new tests failed for the intended missing process-lifetime guard, legacy-registration neutralization, missing-file reconciliation, persistent replay, duplicate completion, and bounded history behaviors.
+- The TypeScript response-loss regression passed immediately because the existing bounded retry/deduplication path already satisfied that side of the contract; the test now locks it.
+
+GREEN:
+- Focused TypeScript: 2 files, 10 tests passed.
+- Focused native ServiceWorker/store/queue suite: BUILD SUCCESSFUL.
+- Full web: 68 files, 794 tests passed.
+- TypeScript typecheck: passed.
+- Full native unit/Robolectric suite: BUILD SUCCESSFUL.
+- Android `assembleDebug`: BUILD SUCCESSFUL.
+- All commands used hard timeouts and the supplied JDK 21/Android SDK environment. No command timed out or hung.

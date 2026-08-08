@@ -42,6 +42,9 @@ internal class PendingPetImportQueue(private val store: PendingPetArchiveStore) 
 
     @Synchronized
     fun finish(token: String, outcome: PendingArchiveOutcome): String? {
+        if (outcome != PendingArchiveOutcome.RETRY && store.isCompleted(token)) {
+            return claimedToken ?: announcedToken ?: nextAnnouncement()
+        }
         require(token == claimedToken || (outcome == PendingArchiveOutcome.RETRY && token == announcedToken)) {
             "Pending archive is not claimed"
         }

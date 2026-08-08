@@ -106,11 +106,22 @@ internal class PendingPetArchiveStore(
 
     fun acknowledge(token: String) = synchronized(STORE_LOCK) {
         requireSafeToken(token)
+        ensureDirectory()
+        cleanupLocked()
+        if (completedFile(token).isFile) return@synchronized
         val file = archiveFile(token)
-        if (!file.isFile) throw PendingArchiveMissing()
-        val tombstone = File(directory, ".$token.ack")
-        if (!file.renameTo(tombstone)) throw IOException("Could not release acknowledged pet archive")
+        val tombstone = tombstoneFile(token)
+        if (file.isFile && !file.renameTo(tombstone)) {
+            throw IOException("Could not release acknowledged pet archive")
+        }
+        markCompletedLocked(token)
         deleteFile(tombstone)
+    }
+
+    fun isCompleted(token: String): Boolean = synchronized(STORE_LOCK) {
+        requireSafeToken(token)
+        cleanupLocked()
+        completedFile(token).isFile
     }
 
     fun pendingTokens(): List<String> = synchronized(STORE_LOCK) {
@@ -135,16 +146,50 @@ internal class PendingPetArchiveStore(
         if (!directory.exists()) return
         val cutoff = clockMillis() - archiveTtlMillis
         directory.listFiles().orEmpty().forEach { file ->
-            val token = file.name.removeSuffix(".zip")
-            if (!file.isFile
-                || file.name.endsWith(".tmp")
-                || file.name.endsWith(".ack")
-                || !file.name.endsWith(".zip")
-                || !safeToken.matches(token)
-                || file.lastModified() <= cutoff) {
-                deleteFile(file)
+            when {
+                !file.isFile || file.name.endsWith(".tmp") -> deleteFile(file)
+                file.name.startsWith(".") && file.name.endsWith(".ack") -> {
+                    val token = file.name.removePrefix(".").removeSuffix(".ack")
+                    if (safeToken.matches(token) && file.lastModified() > cutoff) {
+                        markCompletedLocked(token)
+                    }
+                    deleteFile(file)
+                }
+                file.name.endsWith(".done") -> {
+                    val token = file.name.removeSuffix(".done")
+                    if (!safeToken.matches(token) || file.lastModified() <= cutoff) deleteFile(file)
+                }
+                file.name.endsWith(".zip") -> {
+                    val token = file.name.removeSuffix(".zip")
+                    if (!safeToken.matches(token) || file.lastModified() <= cutoff) deleteFile(file)
+                }
+                else -> deleteFile(file)
             }
         }
+        pruneCompletedLocked()
+    }
+
+    private fun markCompletedLocked(token: String) {
+        val completed = completedFile(token)
+        if (completed.isFile) return
+        val temporary = File(directory, ".$token.done.tmp")
+        try {
+            temporary.writeBytes(ByteArray(0))
+            if (!temporary.renameTo(completed)) throw IOException("Could not record completed pet archive")
+            completed.setLastModified(clockMillis())
+        } catch (error: Throwable) {
+            temporary.delete()
+            throw error
+        }
+        pruneCompletedLocked()
+    }
+
+    private fun pruneCompletedLocked() {
+        directory.listFiles().orEmpty()
+            .filter { it.isFile && it.name.endsWith(".done") }
+            .sortedWith(compareBy(File::lastModified, File::getName))
+            .dropLast(MAX_COMPLETED_TOKENS)
+            .forEach { deleteFile(it) }
     }
 
     private fun pendingFilesLocked(): List<File> = directory.listFiles()
@@ -190,6 +235,8 @@ internal class PendingPetArchiveStore(
         && value.lowercase(Locale.ROOT).endsWith(".zip")
 
     private fun archiveFile(token: String) = File(directory, "$token.zip")
+    private fun tombstoneFile(token: String) = File(directory, ".$token.ack")
+    private fun completedFile(token: String) = File(directory, "$token.done")
     private fun archiveName(token: String) = "pet-$token.zip"
 
     companion object {
@@ -197,6 +244,7 @@ internal class PendingPetArchiveStore(
         internal const val DEFAULT_MAX_AGGREGATE_BYTES = 64L * 1024L * 1024L
         internal const val DEFAULT_MAX_PENDING_ARCHIVES = 4
         internal const val DEFAULT_ARCHIVE_TTL_MILLIS = 24L * 60L * 60L * 1_000L
+        internal const val MAX_COMPLETED_TOKENS = 16
         private val STORE_LOCK = Any()
         private val ARCHIVE_MIME_TYPES = setOf(
             "application/zip",
