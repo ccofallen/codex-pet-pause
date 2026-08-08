@@ -1,0 +1,107 @@
+[data-app-host='android'].android-app-shell {
+  --android-navigation-height: calc(4.75rem + env(safe-area-inset-bottom));
+  --android-thumb-actions-height: 5.75rem;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at 88% 0%, var(--ambient-accent), transparent 28rem),
+    radial-gradient(circle at 0% 42%, var(--ambient-sage), transparent 24rem),
+    var(--color-background);
+}
+
+[data-app-host='android'] .android-scroll-content {
+  width: min(48rem, 100%);
+  min-height: 100svh;
+  margin: 0 auto;
+  padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(var(--android-navigation-height) + var(--android-thumb-actions-height) + 1.25rem);
+}
+
+[data-app-host='android'] .android-scroll-content > * + * { margin-top: 1rem; }
+
+[data-app-host='android'] .android-capability-status {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+[data-app-host='android'] .android-capability-status h2,
+[data-app-host='android'] .android-capability-status p { margin: 0; }
+
+[data-app-host='android'] .android-capability-status p { color: var(--color-muted); }
+
+[data-app-host='android'] .android-thumb-actions {
+  position: fixed;
+  z-index: 10;
+  right: 0;
+  bottom: var(--android-navigation-height);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: min(48rem, 100%);
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--color-background) 86%, transparent);
+  backdrop-filter: blur(1rem);
+}
+
+[data-app-host='android'] .android-thumb-actions button,
+[data-app-host='android'] .android-bottom-navigation button {
+  min-height: 48px;
+  border: 0;
+  border-radius: 0.9rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+[data-app-host='android'] .android-thumb-actions button {
+  padding: 0.6rem 0.75rem;
+  color: var(--color-accent-contrast);
+  background: var(--color-accent);
+  box-shadow: var(--shadow-card);
+}
+
+[data-app-host='android'] .android-thumb-actions button:last-of-type {
+  color: var(--color-text);
+  background: var(--color-surface-solid);
+  border: 1px solid var(--color-border-strong);
+}
+
+[data-app-host='android'] .android-thumb-actions button:disabled { cursor: wait; opacity: 0.65; }
+
+[data-app-host='android'] .android-thumb-actions p { grid-column: 1 / -1; margin: 0; text-align: center; }
+
+[data-app-host='android'] .android-bottom-navigation {
+  position: fixed;
+  z-index: 11;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  width: min(48rem, 100%);
+  margin: 0 auto;
+  padding: 0.55rem 0.65rem calc(0.55rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-solid) 90%, transparent);
+  backdrop-filter: blur(1rem);
+}
+
+[data-app-host='android'] .android-bottom-navigation button { padding: 0.45rem 0.25rem; color: var(--color-muted); background: transparent; }
+
+[data-app-host='android'] .android-bottom-navigation button[aria-current='page'] { color: var(--color-accent-contrast); background: var(--color-accent-strong); }
+
+@media (max-width: 720px) {
+  [data-app-host='android'] .settings-grid,
+  [data-app-host='android'] .custom-reminder-grid,
+  [data-app-host='android'] .insights-counts { grid-template-columns: minmax(0, 1fr); }
+
+  [data-app-host='android'] .settings-page button,
+  [data-app-host='android'] .insights-panel button,
+  [data-app-host='android'] .pet-library button { min-height: 48px; }
+}

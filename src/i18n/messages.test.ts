@@ -20,6 +20,17 @@ describe('translate', () => {
     expect(translate('zh-CN', 'settings.language')).toBe('语言');
   });
 
+  test('returns complete localized Android phone shell copy', () => {
+    expect(translate('zh-CN', 'android.navigation')).toBe('手机导航');
+    expect(translate('zh-CN', 'android.action.saveSettings')).toBe('保存设置');
+    expect(translate('zh-CN', 'android.capability.storage'))
+      .toBe('设置和宠物库会安全保存在这台手机上。');
+    expect(translate('en', 'android.navigation')).toBe('Phone navigation');
+    expect(translate('en', 'android.action.saveSettings')).toBe('Save settings');
+    expect(translate('en', 'android.capability.storage'))
+      .toBe('Settings and pets are stored securely on this phone.');
+  });
+
   test('returns exact localized ZIP import guidance and errors', () => {
     expect(translate('zh-CN', 'pet.import.instructions'))
       .toBe('选择一个 ZIP，或配套的 JSON 清单和 WebP 图集。');
