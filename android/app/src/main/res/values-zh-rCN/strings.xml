@@ -7,4 +7,10 @@
     <string name="overlay_action_show">显示宠物</string>
     <string name="overlay_action_settings">打开设置</string>
     <string name="overlay_action_quit">退出</string>
+    <string name="petdex_title">Petdex</string>
+    <string name="petdex_navigation_rejected">为确保安全，Petdex 只能打开 petdex.dev 页面。</string>
+    <string name="petdex_secure_connection_failed">Petdex 无法建立安全连接。</string>
+    <string name="petdex_page_failed">无法加载 Petdex 页面，请重试。</string>
+    <string name="petdex_download_rejected">只允许下载兼容的 Codex 宠物 ZIP。</string>
+    <string name="petdex_download_failed">无法下载这个 Codex 宠物 ZIP，请重试。</string>
 </resources>

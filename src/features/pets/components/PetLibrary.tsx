@@ -15,6 +15,7 @@ import {
 } from '../domain/importPetArchive';
 import { BUILTIN_PET_ID, type StoredCodexPet } from '../domain/types';
 import { StoredPetPreview } from './StoredPetPreview';
+import type { AndroidPetImport } from '../../../android/infrastructure/androidPetImport';
 
 type ParseImport = (
   manifestFile: File,
@@ -28,6 +29,7 @@ interface PetLibraryProps {
   parseImport?: ParseImport;
   extractArchive?: ExtractArchive;
   now?: () => number;
+  androidImport?: AndroidPetImport;
 }
 
 const currentTime = (): number => Date.now();
@@ -112,6 +114,7 @@ export function PetLibrary({
   parseImport = parseCodexPetImport,
   extractArchive = extractCodexPetArchive,
   now = currentTime,
+  androidImport,
 }: PetLibraryProps) {
   const controller = useAppController();
   const snapshot = useAppSnapshot();
@@ -223,23 +226,56 @@ export function PetLibrary({
     }
   }, [extractArchive, now, parseImport]);
 
-  useEffect(() => window.petShell?.onPetdexImport?.((event) => {
-    if (event.type === 'error') {
-      setError({ kind: 'petdex-download' });
-      return;
+  useEffect(() => {
+    if (androidImport !== undefined) {
+      return androidImport.subscribe(({ token }) => {
+        const request = importRequestRef.current + 1;
+        importRequestRef.current = request;
+        setError(undefined);
+        setMessage(undefined);
+        void androidImport.consumePendingArchive(token).then((archive) => {
+          if (request === importRequestRef.current) void processFiles([archive]);
+        }).catch(() => {
+          if (request === importRequestRef.current) setError({ kind: 'petdex-download' });
+        });
+      });
     }
-    const archive = new File([event.bytes], event.name, { type: 'application/zip' });
-    void processFiles([archive]);
-  }), [processFiles]);
+    return window.petShell?.onPetdexImport?.((event) => {
+      if (event.type === 'error') {
+        setError({ kind: 'petdex-download' });
+        return;
+      }
+      const archive = new File([event.bytes], event.name, { type: 'application/zip' });
+      void processFiles([archive]);
+    });
+  }, [androidImport, processFiles]);
 
   const openPetdex = (): void => {
     setError(undefined);
     setMessage(undefined);
+    if (androidImport !== undefined) {
+      void androidImport.openPetdex().catch(() => setError({ kind: 'petdex-download' }));
+      return;
+    }
     if (window.petShell?.openPetdex !== undefined) {
       void window.petShell.openPetdex();
       return;
     }
     window.open('https://petdex.dev/', '_blank', 'noopener,noreferrer');
+  };
+
+  const chooseAndroidFiles = (): void => {
+    if (androidImport === undefined) return;
+    const request = importRequestRef.current + 1;
+    importRequestRef.current = request;
+    setError(undefined);
+    setMessage(undefined);
+    void androidImport.pickFiles().then((files) => {
+      if (request !== importRequestRef.current || files.length === 0) return;
+      void processFiles(files);
+    }).catch(() => {
+      if (request === importRequestRef.current) setError({ kind: 'import-generic' });
+    });
   };
 
   const chooseFiles = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -254,10 +290,19 @@ export function PetLibrary({
     setPending(true);
     setError(undefined);
     try {
-      await controller.savePet(preview);
+      if (androidImport === undefined) {
+        await controller.savePet(preview);
+      } else {
+        const existing = snapshot.pets.find(({ id }) => id === preview.id);
+        await androidImport.persistValidatedPet(existing === undefined
+          ? preview
+          : { ...preview, importedAt: existing.importedAt });
+      }
       const displayName = preview.displayName;
       setPreview(undefined);
-      setMessage({ kind: 'saved', name: displayName });
+      setMessage(androidImport === undefined
+        ? { kind: 'saved', name: displayName }
+        : { kind: 'selected' });
       queueMicrotask(() => importTriggerRef.current?.focus());
     } catch {
       setError({ kind: 'save' });
@@ -339,7 +384,7 @@ export function PetLibrary({
             </p>
           </div>
         </div>
-        <input
+        {androidImport === undefined && <input
           ref={inputRef}
           className="visually-hidden"
           type="file"
@@ -347,15 +392,30 @@ export function PetLibrary({
           accept="application/zip,application/x-zip-compressed,application/json,image/webp,.zip,.json,.webp"
           aria-label={t('pet.import.chooseFiles')}
           onChange={chooseFiles}
-        />
-        <div className="pet-import-actions">
-          <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
-          <button ref={importTriggerRef} type="button" onClick={() => inputRef.current?.click()}>
+        />}
+        <div className={androidImport === undefined
+          ? 'pet-import-actions'
+          : 'pet-import-actions android-pet-import-actions'}>
+          <button
+            className={androidImport === undefined ? undefined : 'android-pet-import-action'}
+            data-testid={androidImport === undefined ? undefined : 'android-pet-import-action'}
+            type="button"
+            onClick={openPetdex}
+          >
+            {t('pet.import.petdexAction')}
+          </button>
+          <button
+            ref={importTriggerRef}
+            className={androidImport === undefined ? undefined : 'android-pet-import-action'}
+            data-testid={androidImport === undefined ? undefined : 'android-pet-import-action'}
+            type="button"
+            onClick={androidImport === undefined ? () => inputRef.current?.click() : chooseAndroidFiles}
+          >
             {t('pet.import.action')}
           </button>
           <p className="pet-import-description">{t('pet.import.petdexHint')}</p>
         </div>
-        <div
+        {androidImport === undefined && <div
           className="pet-drop-zone"
           role="button"
           tabIndex={0}
@@ -371,7 +431,7 @@ export function PetLibrary({
           onDrop={dropFiles}
         >
           {t('pet.import.dropInstructions')}
-        </div>
+        </div>}
       </section>
 
       {error !== undefined && preview === undefined && petToDelete === undefined && (
@@ -414,6 +474,7 @@ export function PetLibrary({
           pet={preview}
           replacing={snapshot.pets.some(({ id }) => id === preview.id)}
           pending={pending}
+          nativeActivation={androidImport !== undefined}
           {...(error === undefined ? {} : { error: libraryErrorMessage(error, t) })}
           onClose={closePreview}
           onSave={() => void savePreview()}
@@ -480,13 +541,14 @@ interface ImportPreviewDialogProps {
   pet: StoredCodexPet;
   replacing: boolean;
   pending: boolean;
+  nativeActivation: boolean;
   error?: string;
   onClose(): void;
   onSave(): void;
 }
 
 function ImportPreviewDialog({
-  pet, replacing, pending, error, onClose, onSave,
+  pet, replacing, pending, nativeActivation, error, onClose, onSave,
 }: ImportPreviewDialogProps) {
   const { t } = useI18n();
   const dialogRef = useRef<HTMLElement>(null);
@@ -557,7 +619,9 @@ function ImportPreviewDialog({
         aria-modal="true"
         aria-labelledby={headingId}
       >
-        <h2 id={headingId}>{t('pet.preview.heading')}</h2>
+        <h2 id={headingId}>{t(nativeActivation
+          ? 'android.petImport.previewHeading'
+          : 'pet.preview.heading')}</h2>
         <div className="pet-dialog-preview"><StoredPetPreview pet={pet} /></div>
         <h3>{pet.displayName}</h3>
         <p>{pet.description ?? t('pet.library.noDescription')}</p>
@@ -568,7 +632,9 @@ function ImportPreviewDialog({
           <button ref={saveRef} type="button" disabled={pending} onClick={onSave}>
             {pending
               ? t('pet.preview.saving')
-              : replacing ? t('pet.preview.update') : t('pet.preview.save')}
+              : nativeActivation
+                ? t(replacing ? 'android.petImport.update' : 'android.petImport.confirm')
+                : replacing ? t('pet.preview.update') : t('pet.preview.save')}
           </button>
         </div>
       </section>

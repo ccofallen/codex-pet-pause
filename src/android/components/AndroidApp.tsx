@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppSnapshot } from '../../app/AppProvider';
 import { InsightsPanel } from '../../features/insights/InsightsPanel';
 import { PetLibrary } from '../../features/pets/components/PetLibrary';
@@ -7,6 +7,7 @@ import { SettingsPage } from '../../features/settings/SettingsPage';
 import { useI18n } from '../../i18n/I18nProvider';
 import type { AndroidControlHost } from '../bridge/androidHost';
 import { AndroidCapabilityStatus } from './AndroidCapabilityStatus';
+import { createAndroidPetImport } from '../infrastructure/androidPetImport';
 
 type AndroidView = 'companion' | 'reminders' | 'pet' | 'settings';
 
@@ -21,6 +22,9 @@ export function AndroidApp({ host }: { host?: AndroidControlHost }) {
   const { t } = useI18n();
   const snapshot = useAppSnapshot();
   const [view, setView] = useState<AndroidView>('settings');
+  const petImport = useMemo(() => host === undefined
+    ? undefined
+    : createAndroidPetImport(host), [host]);
 
   if (!snapshot.ready) {
     return (
@@ -38,31 +42,32 @@ export function AndroidApp({ host }: { host?: AndroidControlHost }) {
       ? 'android-reminders-form'
       : undefined;
 
-  const openPetdex = (): void => {
-    window.open('https://petdex.dev/', '_blank', 'noopener,noreferrer');
-  };
-
   const renderView = () => {
     switch (view) {
       case 'companion': return <><Dashboard /><InsightsPanel /></>;
       case 'reminders': return <SettingsPage section="reminders" formId="android-reminders-form" />;
-      case 'pet': return <PetLibrary />;
+      case 'pet': return <PetLibrary {...(petImport === undefined ? {} : { androidImport: petImport })} />;
       case 'settings': return <SettingsPage section="general" formId="android-settings-form" />;
     }
   };
 
   return (
-    <div data-app-host="android" className="android-app-shell">
+    <div
+      data-app-host="android"
+      data-has-thumb-actions={settingsFormId !== undefined}
+      className="android-app-shell"
+    >
       <main id="android-main-content" className="android-scroll-content">
         <AndroidCapabilityStatus host={host} />
         {renderView()}
       </main>
-      <div data-testid="android-thumb-actions" className="android-thumb-actions">
+      <div
+        data-testid="android-thumb-actions"
+        className="android-thumb-actions"
+        hidden={settingsFormId === undefined}
+      >
         {settingsFormId !== undefined && (
           <button type="submit" form={settingsFormId}>{t('android.action.saveSettings')}</button>
-        )}
-        {(view === 'settings' || view === 'pet') && (
-          <button type="button" onClick={openPetdex}>{t('pet.import.petdexAction')}</button>
         )}
       </div>
       <nav className="android-bottom-navigation" aria-label={t('android.navigation')}>

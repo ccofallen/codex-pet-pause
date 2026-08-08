@@ -9,4 +9,10 @@
     <string name="overlay_action_show">Show pet</string>
     <string name="overlay_action_settings">Open settings</string>
     <string name="overlay_action_quit">Quit</string>
+    <string name="petdex_title">Petdex</string>
+    <string name="petdex_navigation_rejected">For safety, Petdex can only open pages on petdex.dev.</string>
+    <string name="petdex_secure_connection_failed">Petdex could not establish a secure connection.</string>
+    <string name="petdex_page_failed">Petdex could not load this page. Try again.</string>
+    <string name="petdex_download_rejected">Only compatible Codex pet ZIP downloads are allowed.</string>
+    <string name="petdex_download_failed">Could not download this Codex pet ZIP. Try again.</string>
 </resources>

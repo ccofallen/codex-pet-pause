@@ -71,7 +71,7 @@ internal class AndroidStateFileSystem : StateFileSystem {
 }
 
 internal object AndroidStateValidator {
-    private val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    private val safePetId = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     private val safeRevision = Regex("^[a-f0-9]{32}$")
     private val canonicalBase64 = Regex("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
     private val actions = setOf("completed", "snoozed", "skipped")

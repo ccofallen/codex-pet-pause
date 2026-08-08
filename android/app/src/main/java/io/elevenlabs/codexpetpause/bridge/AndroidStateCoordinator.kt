@@ -62,7 +62,19 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     }
 
     @Synchronized
-    fun savePet(id: String, metadataJson: String, spritesheetBase64: String): String {
+    fun savePet(id: String, metadataJson: String, spritesheetBase64: String): String =
+        savePetTransaction(id, metadataJson, spritesheetBase64, activate = false)
+
+    @Synchronized
+    fun persistValidatedPet(id: String, metadataJson: String, spritesheetBase64: String): String =
+        savePetTransaction(id, metadataJson, spritesheetBase64, activate = true)
+
+    private fun savePetTransaction(
+        id: String,
+        metadataJson: String,
+        spritesheetBase64: String,
+        activate: Boolean,
+    ): String {
         AndroidStateValidator.requireSafePetId(id)
         AndroidStateValidator.validatePetMetadata(metadataJson, id)
         AndroidStateValidator.decodeSpritesheet(spritesheetBase64)
@@ -83,7 +95,13 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
             updated.put(replacement)
             current.put("pets", updated)
             val overlay = current.getJSONObject("overlay")
-            if (overlay.optJSONObject("activePet")?.optString("id") == id) overlay.put("activePet", replacement)
+            if (activate || overlay.optJSONObject("activePet")?.optString("id") == id) {
+                overlay.put("activePet", replacement)
+            }
+            if (activate && !current.isNull("settingsJson")) {
+                val settings = JSONObject(current.getString("settingsJson")).put("activePetId", id)
+                current.put("settingsJson", settings.toString())
+            }
             val value = persist(current)
             if (oldAssetPath != null && oldAssetPath != newAssetPath) runCatching { store.deleteAsset(oldAssetPath) }
             return value
@@ -137,6 +155,10 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         }
         requireNotNull(selected) { "Pet not found" }
         next.getJSONObject("overlay").put("activePet", selected)
+        if (!next.isNull("settingsJson")) {
+            val settings = JSONObject(next.getString("settingsJson")).put("activePetId", id)
+            next.put("settingsJson", settings.toString())
+        }
         return persist(next)
     }
 

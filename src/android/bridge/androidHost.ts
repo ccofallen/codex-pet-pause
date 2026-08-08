@@ -17,6 +17,23 @@ export interface AndroidPetWrite {
   spritesheetBase64: string;
 }
 
+export type AndroidNativePetMime = 'application/zip' | 'application/json' | 'image/webp';
+
+export interface AndroidNativePetFile {
+  name: string;
+  mimeType: AndroidNativePetMime;
+  base64: string;
+}
+
+export type AndroidPetFileSelection =
+  | { status: 'cancelled'; files: [] }
+  | { status: 'selected'; files: AndroidNativePetFile[] };
+
+export interface AndroidPetArchiveEvent {
+  type: 'pet-archive-ready';
+  token: string;
+}
+
 export interface AndroidHostEvent {
   type: 'stateChanged';
   snapshot: AndroidHostSnapshot;
@@ -57,7 +74,15 @@ export interface AndroidHost {
   subscribe(listener: (event: AndroidHostEvent) => void): () => void;
 }
 
-export interface AndroidControlHost extends AndroidHost {
+export interface AndroidPetImportHost {
+  openPetdex(): Promise<void>;
+  pickPetFiles(): Promise<AndroidPetFileSelection>;
+  consumePendingArchive(token: string): Promise<AndroidNativePetFile>;
+  persistValidatedPet(input: AndroidPetWrite): Promise<void>;
+  subscribePetArchives(listener: (event: AndroidPetArchiveEvent) => void): () => void;
+}
+
+export interface AndroidControlHost extends AndroidHost, AndroidPetImportHost {
   getCapabilities(): Promise<AndroidCapabilities>;
   requestNotifications(): Promise<AndroidCapabilities>;
   openNotificationSettings(): Promise<AndroidCapabilities>;
@@ -88,10 +113,59 @@ export interface AndroidHostPlugin {
   showPet?(): Promise<unknown>;
   hidePet?(): Promise<unknown>;
   quit?(): Promise<unknown>;
+  openPetdex?(): Promise<void>;
+  pickPetFiles?(): Promise<unknown>;
+  consumePendingArchive?(options: { token: string }): Promise<unknown>;
+  persistValidatedPet?(options: AndroidPetWrite): Promise<void>;
   addListener(
-    eventName: 'stateChanged' | 'capabilitiesChanged',
+    eventName: 'stateChanged' | 'capabilitiesChanged' | 'petArchiveReady',
     listener: (event: unknown) => void,
   ): Promise<{ remove: () => Promise<void> }>;
+}
+
+const SAFE_ARCHIVE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_NATIVE_FILE_NAME = /^[^/\\\0]{1,255}$/;
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MAX_NATIVE_FILE_BASE64_CHARACTERS = 4 * Math.ceil((32 * 1024 * 1024) / 3);
+
+function requireArchiveToken(token: string): void {
+  if (!SAFE_ARCHIVE_TOKEN.test(token)) throw new Error('invalid Android archive token');
+}
+
+function parseNativePetFile(value: unknown): AndroidNativePetFile {
+  if (typeof value !== 'object' || value === null) throw new Error('invalid Android pet file');
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== 'string' || !SAFE_NATIVE_FILE_NAME.test(record.name)
+    || typeof record.base64 !== 'string' || record.base64.length === 0
+    || record.base64.length > MAX_NATIVE_FILE_BASE64_CHARACTERS
+    || !CANONICAL_BASE64.test(record.base64)) {
+    throw new Error('invalid Android pet file');
+  }
+  const suffix = record.name.toLowerCase().split('.').at(-1);
+  const expectedMime: AndroidNativePetMime | undefined = suffix === 'zip'
+    ? 'application/zip'
+    : suffix === 'json' ? 'application/json' : suffix === 'webp' ? 'image/webp' : undefined;
+  if (record.mimeType !== expectedMime || expectedMime === undefined) {
+    throw new Error('invalid Android pet file');
+  }
+  return {
+    name: record.name,
+    mimeType: expectedMime,
+    base64: record.base64,
+  };
+}
+
+function parsePetFileSelection(value: unknown): AndroidPetFileSelection {
+  if (typeof value !== 'object' || value === null) throw new Error('invalid Android file selection');
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.files)) throw new Error('invalid Android file selection');
+  if (record.status === 'cancelled' && record.files.length === 0) {
+    return { status: 'cancelled', files: [] };
+  }
+  if (record.status !== 'selected' || record.files.length < 1 || record.files.length > 2) {
+    throw new Error('invalid Android file selection');
+  }
+  return { status: 'selected', files: record.files.map(parseNativePetFile) };
 }
 
 function requireSafePetId(id: string): void {
@@ -170,6 +244,36 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
     hidePet: () => callControl('hidePet'),
     quit: () => callControl('quit'),
 
+    async openPetdex(): Promise<void> {
+      if (plugin.openPetdex === undefined) throw new Error('Android host method unavailable: openPetdex');
+      await plugin.openPetdex();
+    },
+
+    async pickPetFiles(): Promise<AndroidPetFileSelection> {
+      if (plugin.pickPetFiles === undefined) throw new Error('Android host method unavailable: pickPetFiles');
+      return parsePetFileSelection(await plugin.pickPetFiles());
+    },
+
+    async consumePendingArchive(token: string): Promise<AndroidNativePetFile> {
+      requireArchiveToken(token);
+      if (plugin.consumePendingArchive === undefined) {
+        throw new Error('Android host method unavailable: consumePendingArchive');
+      }
+      const file = parseNativePetFile(await plugin.consumePendingArchive({ token }));
+      if (file.mimeType !== 'application/zip') throw new Error('invalid Android pending archive');
+      return file;
+    },
+
+    async persistValidatedPet(input: AndroidPetWrite): Promise<void> {
+      requireSafePetId(input.id);
+      validateAndroidPetMetadataJson(input.metadataJson, input.id);
+      validateAndroidSpritesheetBase64(input.spritesheetBase64);
+      if (plugin.persistValidatedPet === undefined) {
+        throw new Error('Android host method unavailable: persistValidatedPet');
+      }
+      await plugin.persistValidatedPet(input);
+    },
+
     subscribe(listener): () => void {
       let disposed = false;
       let remove: (() => Promise<void>) | undefined;
@@ -203,6 +307,28 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
           });
         } catch {
           // Native permission state is untrusted input; malformed events are discarded.
+        }
+      }).then((handle) => {
+        remove = handle.remove;
+        if (disposed) void remove();
+      });
+      return () => {
+        disposed = true;
+        if (remove !== undefined) void remove();
+      };
+    },
+
+    subscribePetArchives(listener): () => void {
+      let disposed = false;
+      let remove: (() => Promise<void>) | undefined;
+      void plugin.addListener('petArchiveReady', (event) => {
+        if (disposed || typeof event !== 'object' || event === null || !('token' in event)
+          || typeof event.token !== 'string') return;
+        try {
+          requireArchiveToken(event.token);
+          listener({ type: 'pet-archive-ready', token: event.token });
+        } catch {
+          // Native handoff tokens are untrusted input; unsafe events are discarded.
         }
       }).then((handle) => {
         remove = handle.remove;

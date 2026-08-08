@@ -205,4 +205,103 @@ describe('createAndroidHost', () => {
 
     expect(received).toEqual([{ type: 'capabilitiesChanged', capabilities }]);
   });
+
+  test('strictly parses picker files and one-shot pending Petdex archives', async () => {
+    const plugin: AndroidHostPlugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      pickPetFiles: async () => ({
+        status: 'selected',
+        files: [{ name: 'pet.json', mimeType: 'application/json', base64: 'e30=' }],
+      }),
+      consumePendingArchive: async ({ token }) => ({
+        name: `${token}.zip`, mimeType: 'application/zip', base64: 'UEsDBA==',
+      }),
+      addListener: async () => ({ remove: async () => undefined }),
+    };
+    const host = createAndroidHost(plugin);
+
+    await expect(host.pickPetFiles()).resolves.toEqual({
+      status: 'selected',
+      files: [{ name: 'pet.json', mimeType: 'application/json', base64: 'e30=' }],
+    });
+    await expect(host.consumePendingArchive('download-1')).resolves.toEqual({
+      name: 'download-1.zip', mimeType: 'application/zip', base64: 'UEsDBA==',
+    });
+    await expect(host.consumePendingArchive('../escape')).rejects.toThrow(
+      'invalid Android archive token',
+    );
+  });
+
+  test('forwards only safe retained Petdex archive events', async () => {
+    let nativeListener: ((value: unknown) => void) | undefined;
+    const plugin: AndroidHostPlugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async (eventName, listener) => {
+        if (eventName === 'petArchiveReady') nativeListener = listener;
+        return { remove: async () => undefined };
+      },
+    };
+    const received: unknown[] = [];
+    const unsubscribe = createAndroidHost(plugin)
+      .subscribePetArchives((event) => received.push(event));
+
+    nativeListener?.({ token: 'download-1' });
+    nativeListener?.({ token: '../escape' });
+    await Promise.resolve();
+    unsubscribe();
+
+    expect(received).toEqual([{ type: 'pet-archive-ready', token: 'download-1' }]);
+  });
+
+  test('persists dotted IDs accepted by the shared pet import contract', async () => {
+    const persisted: unknown[] = [];
+    const plugin: AndroidHostPlugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      persistValidatedPet: async (input) => { persisted.push(input); },
+      addListener: async () => ({ remove: async () => undefined }),
+    };
+    const input = {
+      id: 'moon.cat',
+      metadataJson: JSON.stringify({
+        id: 'moon.cat',
+        displayName: 'Moon Cat',
+        spriteVersion: 2,
+        spritesheetFilename: 'spritesheet.webp',
+        importedAt: 10,
+        updatedAt: 20,
+      }),
+      spritesheetBase64: 'YQ==',
+    };
+
+    await createAndroidHost(plugin).persistValidatedPet(input);
+
+    expect(persisted).toEqual([input]);
+  });
 });

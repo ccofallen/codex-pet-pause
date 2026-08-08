@@ -15,6 +15,11 @@
     var(--color-background);
 }
 
+[data-app-host='android'][data-has-thumb-actions='false'] {
+  --android-thumb-actions-height: 0px;
+  --android-fixed-region-reserve: calc(var(--android-navigation-height) + 1.25rem);
+}
+
 [data-app-host='android'] .android-scroll-content {
   width: min(48rem, 100%);
   min-height: 100svh;
@@ -102,6 +107,21 @@
   padding: 0.75rem 1rem;
   background: color-mix(in srgb, var(--color-background) 86%, transparent);
   backdrop-filter: blur(1rem);
+}
+
+[data-app-host='android'] .android-thumb-actions[hidden] { display: none; }
+
+[data-app-host='android'] .pet-import { grid-template-columns: minmax(0, 1fr); }
+
+[data-app-host='android'] .android-pet-import-actions {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+[data-app-host='android'] .android-pet-import-action {
+  width: 100%;
+  min-height: 56px;
+  padding: 0.8rem 1rem;
 }
 
 [data-app-host='android'] .android-thumb-actions button,

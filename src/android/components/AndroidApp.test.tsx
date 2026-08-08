@@ -38,6 +38,11 @@ function deniedControlHost(): AndroidControlHost {
     savePet: async () => undefined,
     deletePet: async () => undefined,
     selectPet: async () => undefined,
+    openPetdex: async () => undefined,
+    pickPetFiles: async () => ({ status: 'cancelled', files: [] }),
+    consumePendingArchive: async () => { throw new Error('no pending archive'); },
+    persistValidatedPet: async () => undefined,
+    subscribePetArchives: () => () => undefined,
     subscribe: () => () => undefined,
     getCapabilities: async () => capabilities,
     requestNotifications: async () => capabilities,
@@ -51,12 +56,30 @@ function deniedControlHost(): AndroidControlHost {
   };
 }
 
-test('keeps the save and Petdex actions in the mobile thumb action region', async () => {
+test('keeps only settings saves in the thumb region and Petdex inside the pet surface', async () => {
   renderAndroidApp();
 
   const actions = await screen.findByTestId('android-thumb-actions');
   expect(within(actions).getByRole('button', { name: '保存设置' })).toBeVisible();
-  expect(within(actions).getByRole('button', { name: '浏览 Petdex 并自动导入' })).toBeVisible();
+  expect(within(actions).queryByRole('button', { name: '浏览 Petdex 并自动导入' }))
+    .not.toBeInTheDocument();
+});
+
+test('routes the Petdex action through the native host from the Android pet surface', async () => {
+  const user = userEvent.setup();
+  const host = deniedControlHost();
+  const openPetdex = vi.spyOn(host, 'openPetdex');
+  const controller = createAppController(createFakeDependencies({ now: 0 }));
+  render(
+    <AppProvider controller={controller}>
+      <I18nProvider locale="zh-CN"><AndroidApp host={host} /></I18nProvider>
+    </AppProvider>,
+  );
+
+  await user.click(await screen.findByRole('button', { name: '宠物' }));
+  await user.click(screen.getByRole('button', { name: '浏览 Petdex 并自动导入' }));
+
+  expect(openPetdex).toHaveBeenCalledOnce();
 });
 
 test('does not render an embedded second pet in Android settings', async () => {
@@ -75,7 +98,8 @@ test('localizes Android navigation and capability status in English', async () =
   expect(await screen.findByRole('navigation', { name: 'Phone navigation' })).toBeVisible();
   expect(screen.getByText('Settings and pets are stored securely on this phone.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Save settings' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Browse Petdex and import automatically' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Browse Petdex and import automatically' }))
+    .not.toBeInTheDocument();
 });
 
 test('keeps settings navigation and retry available when overlay permission is refused', async () => {

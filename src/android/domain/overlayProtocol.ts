@@ -1,5 +1,5 @@
 export const ANDROID_STATE_SCHEMA_VERSION = 1 as const;
-const SAFE_PET_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const SAFE_PET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SAFE_ASSET_PATH = /^pets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/([a-f0-9]{32})\/spritesheet\.webp$/;
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const ACTIVITY_ACTIONS = new Set(['completed', 'snoozed', 'skipped']);

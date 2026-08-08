@@ -24,6 +24,15 @@
 
         </activity>
 
+        <activity
+            android:name=".petdex.PetdexActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="\${applicationId}.petdex"
+            android:label="@string/petdex_title"
+            android:theme="@style/AppTheme" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

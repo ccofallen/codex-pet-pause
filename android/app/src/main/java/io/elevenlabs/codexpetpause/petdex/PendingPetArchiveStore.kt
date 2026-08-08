@@ -1,0 +1,137 @@
+package io.elevenlabs.codexpetpause.petdex
+
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.util.Locale
+import java.util.UUID
+
+internal class ArchiveTooLarge : IOException("Pet archive exceeds the maximum size")
+internal class InvalidPetArchive : IOException("Pet archive is not a supported ZIP")
+internal class PendingArchiveMissing : IOException("Pending pet archive was not found")
+
+internal data class PendingPetArchive(val token: String, val name: String)
+internal data class PendingPetArchiveData(val name: String, val bytes: ByteArray)
+
+internal class PendingPetArchiveStore(
+    rootDirectory: File,
+    private val maxArchiveBytes: Long = DEFAULT_MAX_ARCHIVE_BYTES,
+) {
+    private val directory = File(rootDirectory, "pending-pet-archives")
+    private val safeToken = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+    @Synchronized
+    fun accept(input: InputStream, mimeType: String, suggestedName: String): PendingPetArchive {
+        requireArchiveMime(mimeType)
+        if (!isSafeArchiveName(suggestedName)) throw InvalidPetArchive()
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IOException("Could not create archive handoff directory")
+        }
+        val token = UUID.randomUUID().toString()
+        val temporary = File(directory, ".$token.tmp")
+        val target = archiveFile(token)
+        try {
+            val header = ByteArray(4)
+            var headerBytes = 0
+            var total = 0L
+            temporary.outputStream().use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    if (total + count > maxArchiveBytes) throw ArchiveTooLarge()
+                    if (headerBytes < header.size) {
+                        val copied = minOf(count, header.size - headerBytes)
+                        buffer.copyInto(header, headerBytes, 0, copied)
+                        headerBytes += copied
+                    }
+                    output.write(buffer, 0, count)
+                    total += count
+                }
+            }
+            if (total == 0L || headerBytes < header.size || !isZipHeader(header)) {
+                throw InvalidPetArchive()
+            }
+            if (target.exists() || !temporary.renameTo(target)) {
+                throw IOException("Could not publish pending pet archive")
+            }
+            return PendingPetArchive(token, archiveName(token))
+        } catch (error: Throwable) {
+            temporary.delete()
+            target.delete()
+            throw error
+        }
+    }
+
+    @Synchronized
+    fun consume(token: String): PendingPetArchiveData {
+        require(safeToken.matches(token)) { "Unsafe pending archive token" }
+        val file = archiveFile(token)
+        if (!file.isFile) throw PendingArchiveMissing()
+        return try {
+            val bytes = file.inputStream().use(::readBounded)
+            if (!isZipHeader(bytes)) throw InvalidPetArchive()
+            PendingPetArchiveData(archiveName(token), bytes)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Synchronized
+    fun pendingTokens(): List<String> = pendingFiles()
+        .map { it.name.removeSuffix(".zip") }
+        .filter(safeToken::matches)
+        .sorted()
+
+    @Synchronized
+    internal fun pendingFiles(): List<File> = directory.listFiles()
+        ?.filter { it.isFile && it.name.endsWith(".zip") }
+        .orEmpty()
+
+    private fun readBounded(input: InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count == 0) continue
+            if (total + count > maxArchiveBytes) throw ArchiveTooLarge()
+            output.write(buffer, 0, count)
+            total += count
+        }
+        return output.toByteArray()
+    }
+
+    private fun requireArchiveMime(value: String) {
+        val mime = value.substringBefore(';').trim().lowercase(Locale.ROOT)
+        if (mime !in ARCHIVE_MIME_TYPES) throw InvalidPetArchive()
+    }
+
+    private fun isSafeArchiveName(value: String): Boolean = value.length in 1..255
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains('\u0000')
+        && value.lowercase(Locale.ROOT).endsWith(".zip")
+
+    private fun archiveFile(token: String) = File(directory, "$token.zip")
+    private fun archiveName(token: String) = "pet-$token.zip"
+
+    companion object {
+        internal const val DEFAULT_MAX_ARCHIVE_BYTES = 32L * 1024L * 1024L
+        private val ARCHIVE_MIME_TYPES = setOf(
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/octet-stream",
+        )
+
+        private fun isZipHeader(bytes: ByteArray): Boolean = bytes.size >= 4
+            && bytes[0] == 'P'.code.toByte()
+            && bytes[1] == 'K'.code.toByte()
+            && ((bytes[2] == 3.toByte() && bytes[3] == 4.toByte())
+                || (bytes[2] == 5.toByte() && bytes[3] == 6.toByte())
+                || (bytes[2] == 7.toByte() && bytes[3] == 8.toByte()))
+    }
+}

@@ -39,6 +39,11 @@ function controlHost(initial: AndroidCapabilities) {
     savePet: async () => undefined,
     deletePet: async () => undefined,
     selectPet: async () => undefined,
+    openPetdex: async () => undefined,
+    pickPetFiles: async () => ({ status: 'cancelled', files: [] }),
+    consumePendingArchive: async () => { throw new Error('no pending archive'); },
+    persistValidatedPet: async () => undefined,
+    subscribePetArchives: () => () => undefined,
     subscribe: () => () => undefined,
     getCapabilities: vi.fn(async () => capabilities),
     requestNotifications: vi.fn(async () => {

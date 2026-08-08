@@ -72,6 +72,39 @@ class AndroidStateCoordinatorTest {
     }
 
     @Test
+    fun persistValidatedPetCommitsImmutableAssetsAndActiveStateTogether() {
+        val fixture = fixture()
+        fixture.store.writeSnapshot(snapshot(emptyList(), null))
+
+        fixture.coordinator.persistValidatedPet("momo", petMetadata("momo", "Momo"), "bmV3")
+
+        val stored = JSONObject(fixture.store.readSnapshot()!!)
+        val pet = stored.getJSONArray("pets").getJSONObject(0)
+        assertEquals("momo", pet.getString("id"))
+        assertEquals(assetPath(pet), assetPath(stored.getJSONObject("overlay").getJSONObject("activePet")))
+        assertEquals("momo", JSONObject(stored.getString("settingsJson")).getString("activePetId"))
+        assertArrayEquals(
+            "new".toByteArray(),
+            fixture.fileSystem.readBytes("pets/momo/$NEW_REVISION/spritesheet.webp"),
+        )
+    }
+
+    @Test
+    fun failedValidatedPetCommitKeepsThePreviousActivePet() {
+        val fixture = fixture()
+        fixture.store.writeSnapshot(snapshot(emptyList(), null))
+        val previous = fixture.store.readSnapshot()
+        fixture.fileSystem.failNextAtomicWrite()
+
+        assertThrows(IOException::class.java) {
+            fixture.coordinator.persistValidatedPet("momo", petMetadata("momo", "Momo"), "bmV3")
+        }
+
+        assertEquals(previous, fixture.store.readSnapshot())
+        assertFalse(fixture.fileSystem.hasPath("/state/pets/momo/$NEW_REVISION"))
+    }
+
+    @Test
     fun deleteCommitsReferenceRemovalBeforeBestEffortAssetCleanup() {
         val fixture = fixtureWithPets("momo")
         val oldPath = assetPath(JSONObject(fixture.store.readSnapshot()!!).getJSONArray("pets").getJSONObject(0))
