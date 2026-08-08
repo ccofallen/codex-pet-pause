@@ -143,12 +143,14 @@ class PetdexActivity : AppCompatActivity() {
         setContentView(webView)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
+                PetdexBackNavigator(
+                    canGoBack = webView::canGoBack,
+                    goBack = webView::goBack,
+                    finishActivity = {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    },
+                ).handle()
             }
         })
         configureServiceWorkerPolicy()
@@ -354,5 +356,19 @@ class PetdexActivity : AppCompatActivity() {
         private const val MAX_REDIRECTS = 3
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
+    }
+}
+
+internal class PetdexBackNavigator(
+    private val canGoBack: () -> Boolean,
+    private val goBack: () -> Unit,
+    private val finishActivity: () -> Unit,
+) {
+    fun handle() {
+        if (canGoBack()) {
+            goBack()
+        } else {
+            finishActivity()
+        }
     }
 }

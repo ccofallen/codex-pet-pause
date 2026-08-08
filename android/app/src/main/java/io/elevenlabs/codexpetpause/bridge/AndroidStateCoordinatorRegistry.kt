@@ -1,5 +1,7 @@
 package io.elevenlabs.codexpetpause.bridge
 
+import androidx.annotation.VisibleForTesting
+
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -12,5 +14,10 @@ internal object AndroidStateCoordinatorRegistry {
         return coordinators.computeIfAbsent(key) {
             AndroidStateCoordinator(AndroidStateStore(filesDir))
         }
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.NONE)
+    internal fun resetForTests() {
+        coordinators.clear()
     }
 }

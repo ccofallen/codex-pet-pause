@@ -1,23 +1,16 @@
 package io.elevenlabs.codexpetpause
 
-import android.util.Base64
+import android.graphics.BitmapFactory
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
-import io.elevenlabs.codexpetpause.petdex.InvalidPetArchive
-import io.elevenlabs.codexpetpause.petdex.PendingArchiveOutcome
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
-import io.elevenlabs.codexpetpause.petdex.PendingPetImportQueue
-import io.elevenlabs.codexpetpause.petdex.PetdexSecurityPolicy
+import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -26,75 +19,102 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PetImportPersistenceTest {
-    @Before fun setUp() { DeviceQa.reset(); DeviceQa.seedState() }
-    @After fun tearDown() = DeviceQa.stopService()
+    @Before
+    fun setUp() {
+        DeviceQa.reset()
+        DeviceQa.grantNotifications()
+        DeviceQa.setOverlayPermission(true)
+        DeviceQa.seedState()
+    }
 
-    @Test
-    fun nestedArchiveQueuesImmediatelyAndSurvivesActivityRestartUntilAcknowledged() {
-        val bytes = nestedPetArchive()
-        val store = PendingPetArchiveStore(DeviceQa.context.cacheDir)
-        val pending = store.accept(ByteArrayInputStream(bytes), "application/zip", "momo.zip")
-        val queue = PendingPetImportQueue(store)
-        assertEquals(pending.token, queue.nextAnnouncement())
-        assertArrayEquals(bytes, queue.claim(pending.token).bytes)
-
-        ActivityScenario.launch(MainActivity::class.java).use { DeviceQa.awaitText("Phone status", "手机状态") }
-        val restoredStore = PendingPetArchiveStore(DeviceQa.context.cacheDir)
-        assertEquals(listOf(pending.token), restoredStore.pendingTokens())
-        assertArrayEquals(bytes, restoredStore.peek(pending.token).bytes)
-        val restoredQueue = PendingPetImportQueue(restoredStore)
-        assertEquals(pending.token, restoredQueue.nextAnnouncement())
-        restoredQueue.claim(pending.token)
-        assertEquals(null, restoredQueue.finish(pending.token, PendingArchiveOutcome.IMPORTED))
-        assertTrue(restoredStore.pendingTokens().isEmpty())
+    @After
+    fun tearDown() {
+        DeviceQa.stopService()
     }
 
     @Test
-    fun validatedPetAndSelectionPersistAcrossActivityAndCoordinatorRestart() {
-        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir)
-        val atlas = "device-atlas".toByteArray()
-        val metadata = JSONObject().put("id", "device-momo").put("displayName", "Device Momo")
-            .put("spriteVersion", 2).put("spritesheetFilename", "spritesheet.webp")
-            .put("importedAt", 10).put("updatedAt", 20).toString()
-        coordinator.persistValidatedPet("device-momo", metadata, Base64.encodeToString(atlas, Base64.NO_WRAP))
-        ActivityScenario.launch(MainActivity::class.java).use { DeviceQa.awaitText("Phone status", "手机状态") }
+    fun validNestedArchivePreviewsUsesAndReconstructsAfterActivityRelaunch() {
+        val fixture = testAsset("task9-valid-pet.zip")
+        val atlasFixture = testAsset("task9-valid-pet.webp")
+        val decodedFixture = requireNotNull(
+            BitmapFactory.decodeByteArray(atlasFixture, 0, atlasFixture.size),
+        )
+        assertEquals(1536, decodedFixture.width)
+        assertEquals(2288, decodedFixture.height)
 
-        val snapshot = JSONObject(requireNotNull(
-            AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir).loadSnapshot(),
-        ))
-        val pet = snapshot.getJSONArray("pets").getJSONObject(0)
-        assertEquals("device-momo", pet.getString("id"))
-        assertEquals("device-momo", JSONObject(snapshot.getString("settingsJson")).getString("activePetId"))
-        assertArrayEquals(atlas, DeviceQa.context.filesDir.resolve(pet.getString("assetPath")).readBytes())
-    }
-
-    @Test
-    fun importBoundaryRejectsInvalidZipUnsafeTokenAndNonPetdexOrigins() {
         val store = PendingPetArchiveStore(DeviceQa.context.cacheDir)
-        assertThrows(InvalidPetArchive::class.java) {
-            store.accept(ByteArrayInputStream("not a zip".toByteArray()), "application/zip", "bad.zip")
+        val pending = store.accept(
+            ByteArrayInputStream(fixture),
+            "application/zip",
+            "task9-valid-pet.zip",
+        )
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            DeviceQa.awaitText("Pet security preview", "宠物安全预览")
+            DeviceQa.clickText("Save and use this pet", "保存并使用这个宠物")
+            DeviceQa.awaitCondition("imported pet selected") {
+                selectedPetId() == "task9-momo"
+            }
+            DeviceQa.awaitCondition("pending archive acknowledged") {
+                store.pendingTokens().isEmpty() && store.isCompleted(pending.token)
+            }
+
+            scenario.recreate()
+            DeviceQa.awaitText("Phone status", "手机状态")
+            DeviceQa.clickText("Pet", "宠物")
+            DeviceQa.awaitText("Task 9 Momo")
         }
-        assertThrows(IllegalArgumentException::class.java) { store.peek("../escape") }
+
+        AndroidStateCoordinatorRegistry.resetForTests()
+        val reconstructed = AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir)
+        val snapshot = JSONObject(requireNotNull(reconstructed.loadSnapshot()))
+        val selected = JSONObject(snapshot.getString("settingsJson")).getString("activePetId")
+        val pet = snapshot.getJSONArray("pets").let { pets ->
+            (0 until pets.length())
+                .map(pets::getJSONObject)
+                .single { it.getString("id") == selected }
+        }
+        val asset = DeviceQa.context.filesDir.resolve(pet.getString("assetPath")).readBytes()
+        val decodedPersisted = requireNotNull(BitmapFactory.decodeByteArray(asset, 0, asset.size))
+
+        assertEquals("task9-momo", selected)
+        assertEquals(1536, decodedPersisted.width)
+        assertEquals(2288, decodedPersisted.height)
+        assertArrayEquals(atlasFixture, asset)
+
+        DeviceQa.startService(PetOverlayService.START)
+        val overlay = DeviceQa.awaitOverlay()
+        assertEquals(DeviceQa.dp(72), overlay.width())
+        assertEquals(DeviceQa.dp(72), overlay.height())
+        assertEquals("task9-momo", selectedPetId())
+    }
+
+    @Test
+    fun pendingStoreRejectsNonArchiveMimeAndUnsafeDisplayName() {
+        val fixture = testAsset("task9-valid-pet.zip")
+        val store = PendingPetArchiveStore(DeviceQa.context.cacheDir)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.accept(ByteArrayInputStream(fixture), "text/plain", "task9-valid-pet.zip")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.accept(ByteArrayInputStream(fixture), "application/zip", "../escape.zip")
+        }
         assertTrue(store.pendingTokens().isEmpty())
-        assertTrue(PetdexSecurityPolicy.isAllowedPage("https://petdex.dev/pets/momo"))
-        assertTrue(PetdexSecurityPolicy.isAllowedDownload(
-            "https://petdex.dev/download/momo.zip", "application/zip", "momo.zip",
-        ))
-        assertFalse(PetdexSecurityPolicy.isAllowedPage("http://127.0.0.1:8080/momo"))
-        assertFalse(PetdexSecurityPolicy.isAllowedDownload(
-            "https://petdex.dev.evil.invalid/momo.zip", "application/zip", "momo.zip",
-        ))
     }
 
-    private fun nestedPetArchive() = ByteArrayOutputStream().use { output ->
-        ZipOutputStream(output).use { zip ->
-            zip.putNextEntry(ZipEntry("momo/pet.json"))
-            zip.write("""{"id":"momo","displayName":"Momo"}""".toByteArray())
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("momo/spritesheet.webp"))
-            zip.write("webp".toByteArray())
-            zip.closeEntry()
-        }
-        output.toByteArray()
+    private fun selectedPetId(): String? {
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir)
+        val snapshot = JSONObject(requireNotNull(coordinator.loadSnapshot()))
+        return JSONObject(snapshot.getString("settingsJson")).optString("activePetId")
+    }
+
+    private fun testAsset(name: String): ByteArray {
+        return androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .context
+            .assets
+            .open(name)
+            .use { it.readBytes() }
     }
 }

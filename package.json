@@ -26,7 +26,7 @@
     "android:sync": "npm run android:build:web && cap sync android",
     "android:apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "android:test:native": "cd android && ./gradlew testDebugUnitTest",
-    "android:test:instrumented": "cd android && ./gradlew connectedDebugAndroidTest",
+    "android:test:instrumented": "cd android && ./gradlew :app:connectedDebugAndroidTest",
     "preview": "vite preview",
     "preview:e2e": "vite preview --outDir .e2e-dist",
     "typecheck": "tsc -b --pretty false",

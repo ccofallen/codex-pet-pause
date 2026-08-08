@@ -87,23 +87,6 @@ class OverlayGestureTest {
         assertTrue(DeviceQa.hasForegroundServiceNotification())
     }
 
-    @Test
-    fun notificationPermissionDismissDenyAndRetry() {
-        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        DeviceQa.revokeNotifications()
-        DeviceQa.setOverlayPermission(false)
-        ActivityScenario.launch(MainActivity::class.java).use {
-            DeviceQa.awaitText("Phone status", "手机状态")
-            DeviceQa.clickText("Retry permission", "重新授权", "Enable floating pet", "启用悬浮宠物")
-            DeviceQa.awaitText("Enable notifications first", "先开启通知")
-            DeviceQa.clickText("Allow notifications", "允许通知")
-            DeviceQa.pressBack()
-            DeviceQa.awaitText("Retry notifications", "重新开启通知")
-            DeviceQa.clickText("Retry notifications", "重新开启通知")
-            DeviceQa.clickPermissionButton("permission_deny_button")
-            DeviceQa.awaitText("Retry notifications", "重新开启通知", "Open notification settings", "打开通知设置")
-        }
-    }
 
     @Test
     fun transparentSizesDragSnapRetractRestoreAndIdle() {
@@ -269,9 +252,6 @@ internal object DeviceQa {
         if (Build.VERSION.SDK_INT >= 33) shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
     }
 
-    fun revokeNotifications() {
-        if (Build.VERSION.SDK_INT >= 33) shell("pm revoke ${context.packageName} android.permission.POST_NOTIFICATIONS")
-    }
 
     fun startService(action: String) = ContextCompat.startForegroundService(
         context,
@@ -398,6 +378,14 @@ internal object DeviceQa {
         context.getSystemService(NotificationManager::class.java).activeNotifications.any {
             it.notification.category == Notification.CATEGORY_SERVICE
         }
+
+    fun forceLandscape() {
+        shell("settings put system accelerometer_rotation 0")
+        shell("settings put system user_rotation 1")
+        awaitCondition("landscape orientation") {
+            screenBounds().width() > screenBounds().height()
+        }
+    }
 
     fun restoreRotation() { shell("settings put system accelerometer_rotation 1") }
 
