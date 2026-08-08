@@ -123,7 +123,7 @@ jobs:
         run: |
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$ANDROID_APK"
-          node scripts/verify-android-release.mjs "$ANDROID_ARTIFACT_DIR"
+          ANDROID_APKSIGNER="$APKSIGNER" node scripts/verify-android-release.mjs "$ANDROID_ARTIFACT_DIR"
       - name: Upload signed Android artifact
         if: inputs.release_tag != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
