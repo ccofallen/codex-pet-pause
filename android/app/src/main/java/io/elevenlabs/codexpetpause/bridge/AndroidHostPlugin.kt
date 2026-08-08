@@ -68,7 +68,7 @@ open class AndroidHostPlugin : Plugin() {
 
     override fun handleOnResume() {
         hostLifecycle.onResume()
-        announcePendingArchives()
+        if (::pendingArchives.isInitialized) announcePendingArchives()
     }
 
     @PluginMethod
