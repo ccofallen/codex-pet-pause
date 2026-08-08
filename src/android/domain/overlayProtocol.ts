@@ -1,6 +1,9 @@
 export const ANDROID_STATE_SCHEMA_VERSION = 1 as const;
 const SAFE_PET_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SAFE_ASSET_PATH = /^pets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/spritesheet\.webp$/;
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const ACTIVITY_ACTIONS = new Set(['completed', 'snoozed', 'skipped']);
+const REMINDER_TYPES = new Set(['lookAway', 'drinkWater', 'standUp', 'takeBreak']);
 
 export interface AndroidPetAsset {
   id: string;
@@ -29,14 +32,63 @@ function isRecord(value: unknown): value is RecordValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseJsonObject(value: unknown, message: string): string {
+function parseJsonRecord(value: unknown, message: string): RecordValue {
   if (typeof value !== 'string') throw new Error(message);
   try {
-    if (!isRecord(JSON.parse(value) as unknown)) throw new Error(message);
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) throw new Error(message);
+    return parsed;
   } catch {
     throw new Error(message);
   }
-  if ((JSON.parse(value) as RecordValue).schemaVersion !== 5) throw new Error(message);
+}
+
+export function validateAndroidSettingsJson(value: unknown): string {
+  const parsed = parseJsonRecord(value, 'invalid Android settings JSON');
+  if (parsed.schemaVersion !== 5) throw new Error('invalid Android settings JSON');
+  return value as string;
+}
+
+export function validateAndroidActivityEventJson(value: unknown): string {
+  const parsed = parseJsonRecord(value, 'invalid Android history JSON');
+  if (typeof parsed.id !== 'string' || parsed.id.length === 0
+    || typeof parsed.action !== 'string' || !ACTIVITY_ACTIONS.has(parsed.action)
+    || typeof parsed.occurredAt !== 'number' || !Number.isFinite(parsed.occurredAt)
+    || (parsed.reminderId !== undefined && typeof parsed.reminderId !== 'string')
+    || (parsed.reminderLabel !== undefined && typeof parsed.reminderLabel !== 'string')
+    || (parsed.reminderType !== undefined
+      && (typeof parsed.reminderType !== 'string' || !REMINDER_TYPES.has(parsed.reminderType)))) {
+    throw new Error('invalid Android history JSON');
+  }
+  return value as string;
+}
+
+export function validateAndroidPetMetadataJson(value: unknown, expectedId: string): string {
+  const parsed = parseJsonRecord(value, 'invalid Android pet metadata JSON');
+  if (parsed.id !== expectedId
+    || typeof parsed.displayName !== 'string' || parsed.displayName.length === 0
+    || (parsed.spriteVersion !== 1 && parsed.spriteVersion !== 2)
+    || typeof parsed.spritesheetFilename !== 'string' || parsed.spritesheetFilename.length === 0
+    || typeof parsed.importedAt !== 'number' || !Number.isFinite(parsed.importedAt)
+    || typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)
+    || (parsed.description !== undefined && typeof parsed.description !== 'string')
+    || (parsed.atlasRevision !== undefined && typeof parsed.atlasRevision !== 'string')
+    || (parsed.frameMetadata !== undefined && !isRecord(parsed.frameMetadata))) {
+    throw new Error('invalid Android pet metadata JSON');
+  }
+  return value as string;
+}
+
+export function validateAndroidSpritesheetBase64(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || !CANONICAL_BASE64.test(value)) {
+    throw new Error('invalid Android pet spritesheet');
+  }
+  try {
+    const decoded = atob(value);
+    if (decoded.length === 0 || btoa(decoded) !== value) throw new Error('invalid Android pet spritesheet');
+  } catch {
+    throw new Error('invalid Android pet spritesheet');
+  }
   return value;
 }
 
@@ -52,9 +104,9 @@ function parsePetAsset(value: unknown): AndroidPetAsset {
   if (assetMatch?.[1] !== value.id) throw new Error('invalid Android pet asset');
   return {
     id: value.id,
-    metadataJson: parseJsonObject(value.metadataJson, 'invalid Android pet metadata JSON'),
+    metadataJson: validateAndroidPetMetadataJson(value.metadataJson, value.id),
     assetPath: value.assetPath,
-    spritesheetBase64: value.spritesheetBase64,
+    spritesheetBase64: validateAndroidSpritesheetBase64(value.spritesheetBase64),
   };
 }
 
@@ -72,7 +124,7 @@ export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | 
   if (!Array.isArray(value.historyJson) || !Array.isArray(value.pets) || !isRecord(value.overlay)) {
     throw new Error('invalid Android state snapshot');
   }
-  const historyJson = value.historyJson.map((entry) => parseJsonObject(entry, 'invalid Android history JSON'));
+  const historyJson = value.historyJson.map(validateAndroidActivityEventJson);
   const pets = value.pets.map(parsePetAsset);
   let activePet: AndroidPetAsset | undefined;
   if (value.overlay.activePet !== undefined) {
@@ -84,7 +136,7 @@ export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | 
   }
   return {
     schemaVersion: ANDROID_STATE_SCHEMA_VERSION,
-    settingsJson: parseJsonObject(value.settingsJson, 'invalid Android settings JSON'),
+    settingsJson: validateAndroidSettingsJson(value.settingsJson),
     historyJson,
     pets,
     overlay: {

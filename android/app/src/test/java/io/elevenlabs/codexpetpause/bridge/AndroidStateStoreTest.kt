@@ -12,8 +12,8 @@ class AndroidStateStoreTest {
     fun failedReplacementKeepsPreviousState() {
         val fileSystem = FailingStateFileSystem()
         val store = AndroidStateStore(File("/state"), fileSystem)
-        val validSnapshot = """{"schemaVersion":1,"settingsJson":"{}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
-        val replacement = """{"schemaVersion":1,"settingsJson":"{\\"theme\\":\\"dark\\"}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
+        val validSnapshot = """{"schemaVersion":1,"settingsJson":"{\"schemaVersion\":5}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
+        val replacement = """{"schemaVersion":1,"settingsJson":"{\"schemaVersion\":5,\"theme\":\"dark\"}","historyJson":[],"pets":[],"overlay":{"xRatio":0.5,"yRatio":0.5}}"""
 
         store.writeSnapshot(validSnapshot)
         fileSystem.failNextAtomicWrite()
@@ -31,6 +31,29 @@ class AndroidStateStoreTest {
             store.writePet("../escape", "{\"id\":\"escape\"}", "c3ByaXRl")
         }
 
+        assertTrue(fileSystem.createdDirectories.isEmpty())
+    }
+
+    @Test
+    fun rejectsNestedSchemaMarkersInsteadOfSearchingSnapshotText() {
+        val store = AndroidStateStore(File("/state"), FailingStateFileSystem())
+
+        assertThrows(Exception::class.java) {
+            store.writeSnapshot("""{"nested":{"schemaVersion":1}}""")
+        }
+    }
+
+    @Test
+    fun rejectsMalformedMetadataAndNonCanonicalBase64BeforeWritingAssets() {
+        val fileSystem = FailingStateFileSystem()
+        val store = AndroidStateStore(File("/state"), fileSystem)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writePet("momo", "{not-json}", "c3ByaXRl")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.writePet("momo", """{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}""", "AB==")
+        }
         assertTrue(fileSystem.createdDirectories.isEmpty())
     }
 }
@@ -53,6 +76,8 @@ private class FailingStateFileSystem : StateFileSystem {
         }
         state = value
     }
+
+    override fun exists(file: File): Boolean = false
 
     override fun createTemporarySibling(target: File): File {
         return File(target.parentFile, ".${target.name}.tmp").also(createdDirectories::add)

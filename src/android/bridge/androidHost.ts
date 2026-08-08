@@ -2,6 +2,10 @@ import { registerPlugin } from '@capacitor/core';
 import {
   isSafeAndroidPetId,
   parseAndroidHostSnapshot,
+  validateAndroidActivityEventJson,
+  validateAndroidPetMetadataJson,
+  validateAndroidSettingsJson,
+  validateAndroidSpritesheetBase64,
   type AndroidHostSnapshot,
 } from '../domain/overlayProtocol';
 
@@ -20,10 +24,10 @@ export interface AndroidHostEvent {
 
 export interface AndroidHost {
   loadSnapshot(): Promise<AndroidHostSnapshot | null>;
-  clearSettings?: () => Promise<void>;
-  replaceHistory?: (historyJson: readonly string[]) => Promise<void>;
-  clearHistory?: () => Promise<void>;
-  clearPets?: () => Promise<void>;
+  clearSettings(): Promise<void>;
+  replaceHistory(historyJson: readonly string[]): Promise<void>;
+  clearHistory(): Promise<void>;
+  clearPets(): Promise<void>;
   saveSettings(settingsJson: string): Promise<void>;
   appendHistory(eventJson: string): Promise<void>;
   savePet(input: AndroidPetWrite): Promise<void>;
@@ -34,10 +38,10 @@ export interface AndroidHost {
 
 export interface AndroidHostPlugin {
   loadSnapshot(): Promise<unknown>;
-  clearSettings?: () => Promise<void>;
-  replaceHistory?: (options: { historyJson: string[] }) => Promise<void>;
-  clearHistory?: () => Promise<void>;
-  clearPets?: () => Promise<void>;
+  clearSettings(): Promise<void>;
+  replaceHistory(options: { historyJson: string[] }): Promise<void>;
+  clearHistory(): Promise<void>;
+  clearPets(): Promise<void>;
   saveSettings(options: { json: string }): Promise<void>;
   appendHistory(options: { json: string }): Promise<void>;
   savePet(options: AndroidPetWrite): Promise<void>;
@@ -47,15 +51,6 @@ export interface AndroidHostPlugin {
     eventName: 'stateChanged',
     listener: (event: unknown) => void,
   ): Promise<{ remove: () => Promise<void> }>;
-}
-
-function requireJsonObject(value: string, message: string): void {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error(message);
-  } catch {
-    throw new Error(message);
-  }
 }
 
 function requireSafePetId(id: string): void {
@@ -68,25 +63,28 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidHost {
       return parseAndroidHostSnapshot(await plugin.loadSnapshot());
     },
 
-    async clearSettings(): Promise<void> { await plugin.clearSettings!(); },
-    async replaceHistory(historyJson): Promise<void> { await plugin.replaceHistory!({ historyJson: [...historyJson] }); },
-    async clearHistory(): Promise<void> { await plugin.clearHistory!(); },
-    async clearPets(): Promise<void> { await plugin.clearPets!(); },
+    async clearSettings(): Promise<void> { await plugin.clearSettings(); },
+    async replaceHistory(historyJson): Promise<void> {
+      historyJson.forEach(validateAndroidActivityEventJson);
+      await plugin.replaceHistory({ historyJson: [...historyJson] });
+    },
+    async clearHistory(): Promise<void> { await plugin.clearHistory(); },
+    async clearPets(): Promise<void> { await plugin.clearPets(); },
 
     async saveSettings(settingsJson: string): Promise<void> {
-      requireJsonObject(settingsJson, 'invalid Android settings JSON');
+      validateAndroidSettingsJson(settingsJson);
       await plugin.saveSettings({ json: settingsJson });
     },
 
     async appendHistory(eventJson: string): Promise<void> {
-      requireJsonObject(eventJson, 'invalid Android history JSON');
+      validateAndroidActivityEventJson(eventJson);
       await plugin.appendHistory({ json: eventJson });
     },
 
     async savePet(input: AndroidPetWrite): Promise<void> {
       requireSafePetId(input.id);
-      requireJsonObject(input.metadataJson, 'invalid Android pet metadata JSON');
-      if (input.spritesheetBase64.length === 0) throw new Error('invalid Android pet spritesheet');
+      validateAndroidPetMetadataJson(input.metadataJson, input.id);
+      validateAndroidSpritesheetBase64(input.spritesheetBase64);
       await plugin.savePet(input);
     },
 

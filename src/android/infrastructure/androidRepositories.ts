@@ -89,7 +89,6 @@ export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepo
       await host.saveSettings(JSON.stringify(value));
     },
     async clear(): Promise<void> {
-      if (host.clearSettings === undefined) throw new Error("Android settings clear is unavailable");
       await host.clearSettings();
     },
   };
@@ -109,11 +108,9 @@ export function createAndroidHistoryRepository(host: AndroidHost): HistoryReposi
     async prune(now): Promise<void> {
       const snapshot = await host.loadSnapshot();
       if (snapshot === null) return;
-      if (host.replaceHistory === undefined) throw new Error("Android history replacement is unavailable");
-      await host.replaceHistory(snapshot!.historyJson.filter((value) => parseHistoryEvent(value).occurredAt >= now - 90 * 24 * 60 * 60 * 1000));
+      await host.replaceHistory(snapshot.historyJson.filter((value) => parseHistoryEvent(value).occurredAt >= now - 90 * 24 * 60 * 60 * 1000));
     },
-    async clear(): Promise<void> { if (host.clearHistory === undefined) throw new Error("Android history clear is unavailable");
-      await host.clearHistory(); },
+    async clear(): Promise<void> { await host.clearHistory(); },
   };
 }
 
@@ -138,7 +135,6 @@ export function createAndroidPetRepository(host: AndroidHost): PetRepository {
       await host.deletePet(id);
     },
     async clear(): Promise<void> {
-      if (host.clearPets === undefined) throw new Error("Android pet clear is unavailable");
       await host.clearPets();
     },
   };

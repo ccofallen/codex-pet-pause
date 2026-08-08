@@ -16,7 +16,8 @@ describe('Android persistent repositories', () => {
     const valid = { schemaVersion: 1, settingsJson: '{}', historyJson: [], pets: [], overlay: { xRatio: .5, yRatio: .5 } };
     expect(() => parseAndroidHostSnapshot(valid)).toThrow('invalid Android settings');
     expect(() => parseAndroidHostSnapshot({ ...valid, settingsJson: JSON.stringify(createDefaultSettings(1, 'en')), historyJson: ['{'] })).toThrow('invalid Android history');
-    expect(() => parseAndroidHostSnapshot({ ...valid, settingsJson: JSON.stringify(createDefaultSettings(1, 'en')), pets: [{ id: 'p', metadataJson: '{}', assetPath: 'pets/p/spritesheet.webp', spritesheetBase64: '*' }] })).toThrow('invalid Android pet');
+    expect(() => parseAndroidHostSnapshot({ ...valid, settingsJson: JSON.stringify(createDefaultSettings(1, 'en')), pets: [{ id: 'p', metadataJson: '{}', assetPath: 'pets/p/spritesheet.webp', spritesheetBase64: 'c3ByaXRl' }] })).toThrow('invalid Android pet metadata');
+    expect(() => parseAndroidHostSnapshot({ ...valid, settingsJson: JSON.stringify(createDefaultSettings(1, 'en')), pets: [{ id: 'p', metadataJson: '{"id":"p","displayName":"P","spriteVersion":2,"spritesheetFilename":"p.webp","importedAt":1,"updatedAt":2}', assetPath: 'pets/p/spritesheet.webp', spritesheetBase64: 'AB==' }] })).toThrow('invalid Android pet spritesheet');
   });
   test('implements settings clear, history prune/clear, and pets clear', async () => {
     const value = host(); const settings = createAndroidSettingsRepository(value); const history = createAndroidHistoryRepository(value); const pets = createAndroidPetRepository(value);

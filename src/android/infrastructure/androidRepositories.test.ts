@@ -18,6 +18,10 @@ function createHost(): AndroidHost {
   };
   return {
     loadSnapshot: async () => snapshot,
+    clearSettings: async () => undefined,
+    replaceHistory: async (historyJson) => { snapshot = { ...snapshot, historyJson }; },
+    clearHistory: async () => { snapshot = { ...snapshot, historyJson: [] }; },
+    clearPets: async () => { snapshot = { ...snapshot, pets: [], overlay: { ...snapshot.overlay, activePet: undefined } }; },
     saveSettings: async (settingsJson) => { snapshot = { ...snapshot, settingsJson }; },
     appendHistory: async (eventJson) => { snapshot = { ...snapshot, historyJson: [...snapshot.historyJson, eventJson] }; },
     savePet: async (input: AndroidPetWrite) => {
