@@ -36,6 +36,7 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
 
   useEffect(() => {
     if (capabilities?.overlayPermission !== 'granted'
+      || capabilities.notificationPermission === 'notRequested'
       || capabilities.serviceActive
       || startPending.current
       || !autoStartAllowed.current) return;
@@ -66,9 +67,22 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
     return <div className="android-onboarding" aria-live="polite"><p>{t('android.onboarding.loading')}</p></div>;
   }
 
-  const notificationNeedsFirstRequest = capabilities.notificationPermission === 'denied'
-    && !capabilities.notificationRequestAttempted;
-  const notificationDenied = capabilities.notificationPermission === 'denied';
+  const notificationNeedsFirstRequest = capabilities.notificationPermission === 'notRequested';
+  const notificationCanRetry = capabilities.notificationPermission === 'deniedCanAsk';
+  const notificationBlocked = capabilities.notificationPermission === 'blocked';
+  const notificationNeedsAction = notificationCanRetry || notificationBlocked;
+
+  const notificationAction = notificationBlocked ? (
+    <button type="button" disabled={busy} onClick={() => void run(host.openNotificationSettings)}>
+      {t('android.onboarding.openNotificationSettings')}
+    </button>
+  ) : (
+    <button type="button" disabled={busy} onClick={() => void run(host.requestNotifications)}>
+      {notificationNeedsFirstRequest
+        ? t('android.onboarding.allowNotifications')
+        : t('android.onboarding.retryNotifications')}
+    </button>
+  );
 
   return (
     <div className="android-onboarding">
@@ -77,8 +91,7 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
           <p>{t('android.onboarding.permissionDeniedUsable')}</p>
           {!setupOpen ? (
             <button type="button" disabled={busy} onClick={() => setSetupOpen(true)}>
-              {capabilities.notificationPermission !== 'notRequired'
-                && capabilities.notificationRequestAttempted
+              {notificationNeedsAction
                 ? t('android.onboarding.retryOverlay')
                 : t('android.onboarding.enable')}
             </button>
@@ -86,23 +99,21 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
             <div className="android-onboarding-step">
               <h3>{t('android.onboarding.notificationHeading')}</h3>
               <p>{t('android.onboarding.notificationBody')}</p>
-              <button type="button" disabled={busy} onClick={() => void run(host.requestNotifications)}>
-                {t('android.onboarding.allowNotifications')}
-              </button>
+              {notificationAction}
             </div>
           ) : (
             <div className="android-onboarding-step">
               <h3>{t('android.onboarding.overlayHeading')}</h3>
               <p>{t('android.onboarding.overlayBody')}</p>
-              {notificationDenied && (
-                <p className="android-permission-warning">{t('android.onboarding.notificationDenied')}</p>
+              {notificationNeedsAction && (
+                <p className="android-permission-warning">
+                  {notificationBlocked
+                    ? t('android.onboarding.notificationBlocked')
+                    : t('android.onboarding.notificationDenied')}
+                </p>
               )}
               <div className="android-onboarding-actions">
-                {notificationDenied && (
-                  <button type="button" disabled={busy} onClick={() => void run(host.requestNotifications)}>
-                    {t('android.onboarding.retryNotifications')}
-                  </button>
-                )}
+                {notificationNeedsAction && notificationAction}
                 <button type="button" disabled={busy} onClick={() => void run(host.openOverlaySettings)}>
                   {t('android.onboarding.openOverlaySettings')}
                 </button>
@@ -110,6 +121,12 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
             </div>
           )}
         </>
+      ) : notificationNeedsFirstRequest ? (
+        <div className="android-onboarding-step">
+          <h3>{t('android.onboarding.notificationHeading')}</h3>
+          <p>{t('android.onboarding.notificationBody')}</p>
+          {notificationAction}
+        </div>
       ) : (
         <>
           <p aria-live="polite">
@@ -120,12 +137,12 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
                 : t('android.onboarding.statusStarting')}
           </p>
           <p>{t('android.onboarding.settingsClose')}</p>
-          {notificationDenied && (
+          {notificationNeedsAction && (
             <div className="android-notification-retry">
-              <p>{t('android.onboarding.notificationDenied')}</p>
-              <button type="button" disabled={busy} onClick={() => void run(host.requestNotifications)}>
-                {t('android.onboarding.retryNotifications')}
-              </button>
+              <p>{notificationBlocked
+                ? t('android.onboarding.notificationBlocked')
+                : t('android.onboarding.notificationDenied')}</p>
+              {notificationAction}
             </div>
           )}
           <div className="android-onboarding-actions android-service-actions">

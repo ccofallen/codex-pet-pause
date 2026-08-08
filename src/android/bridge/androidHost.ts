@@ -23,13 +23,17 @@ export interface AndroidHostEvent {
 }
 
 export type AndroidOverlayPermission = 'granted' | 'denied';
-export type AndroidNotificationPermission = 'notRequired' | 'granted' | 'denied';
+export type AndroidNotificationPermission =
+  | 'notRequired'
+  | 'notRequested'
+  | 'deniedCanAsk'
+  | 'blocked'
+  | 'granted';
 
 export interface AndroidCapabilities {
   apiLevel: number;
   overlayPermission: AndroidOverlayPermission;
   notificationPermission: AndroidNotificationPermission;
-  notificationRequestAttempted: boolean;
   serviceActive: boolean;
   petVisible: boolean;
 }
@@ -56,6 +60,7 @@ export interface AndroidHost {
 export interface AndroidControlHost extends AndroidHost {
   getCapabilities(): Promise<AndroidCapabilities>;
   requestNotifications(): Promise<AndroidCapabilities>;
+  openNotificationSettings(): Promise<AndroidCapabilities>;
   openOverlaySettings(): Promise<AndroidCapabilities>;
   startService(): Promise<AndroidCapabilities>;
   showPet(): Promise<AndroidCapabilities>;
@@ -77,6 +82,7 @@ export interface AndroidHostPlugin {
   selectPet(options: { id: string }): Promise<void>;
   getCapabilities?(): Promise<unknown>;
   requestNotifications?(): Promise<unknown>;
+  openNotificationSettings?(): Promise<unknown>;
   openOverlaySettings?(): Promise<unknown>;
   startService?(): Promise<unknown>;
   showPet?(): Promise<unknown>;
@@ -97,8 +103,8 @@ function parseAndroidCapabilities(value: unknown): AndroidCapabilities {
   const record = value as Record<string, unknown>;
   if (!Number.isInteger(record.apiLevel) || (record.apiLevel as number) < 1
     || (record.overlayPermission !== 'granted' && record.overlayPermission !== 'denied')
-    || !['notRequired', 'granted', 'denied'].includes(record.notificationPermission as string)
-    || typeof record.notificationRequestAttempted !== 'boolean'
+    || !['notRequired', 'notRequested', 'deniedCanAsk', 'blocked', 'granted']
+      .includes(record.notificationPermission as string)
     || typeof record.serviceActive !== 'boolean'
     || typeof record.petVisible !== 'boolean') {
     throw new Error('invalid Android capabilities');
@@ -108,7 +114,7 @@ function parseAndroidCapabilities(value: unknown): AndroidCapabilities {
 
 export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost {
   const callControl = async (method: keyof Pick<AndroidHostPlugin,
-    'getCapabilities' | 'requestNotifications' | 'openOverlaySettings'
+    'getCapabilities' | 'requestNotifications' | 'openNotificationSettings' | 'openOverlaySettings'
     | 'startService' | 'showPet' | 'hidePet' | 'quit'>): Promise<AndroidCapabilities> => {
     const handler = plugin[method];
     if (handler === undefined) throw new Error(`Android host method unavailable: ${method}`);
@@ -157,6 +163,7 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidControlHost
 
     getCapabilities: () => callControl('getCapabilities'),
     requestNotifications: () => callControl('requestNotifications'),
+    openNotificationSettings: () => callControl('openNotificationSettings'),
     openOverlaySettings: () => callControl('openOverlaySettings'),
     startService: () => callControl('startService'),
     showPet: () => callControl('showPet'),

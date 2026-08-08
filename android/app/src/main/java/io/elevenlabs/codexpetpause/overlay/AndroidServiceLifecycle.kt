@@ -33,6 +33,7 @@ internal class AndroidServiceLifecycle internal constructor(
     @Synchronized
     fun start(): AndroidServiceState {
         val current = snapshot()
+        if (current.quitRequested) return current
         return write(
             serviceActive = true,
             petVisible = if (current.serviceActive) current.petVisible else true,
@@ -41,7 +42,11 @@ internal class AndroidServiceLifecycle internal constructor(
     }
 
     @Synchronized
-    fun show(): AndroidServiceState = write(true, true, false)
+    fun show(): AndroidServiceState {
+        val current = snapshot()
+        if (current.quitRequested) return current
+        return write(true, true, false)
+    }
 
     @Synchronized
     fun hide(): AndroidServiceState {

@@ -117,8 +117,7 @@ describe('createAndroidHost', () => {
     const capabilities = {
       apiLevel: 35,
       overlayPermission: 'granted',
-      notificationPermission: 'denied',
-      notificationRequestAttempted: true,
+      notificationPermission: 'deniedCanAsk',
       serviceActive: true,
       petVisible: false,
     };
@@ -135,6 +134,7 @@ describe('createAndroidHost', () => {
       selectPet: async () => undefined,
       getCapabilities: async () => capabilities,
       requestNotifications: async () => { calls.push('notifications'); return capabilities; },
+      openNotificationSettings: async () => { calls.push('notificationSettings'); return capabilities; },
       openOverlaySettings: async () => { calls.push('overlaySettings'); return capabilities; },
       startService: async () => { calls.push('start'); return capabilities; },
       showPet: async () => { calls.push('show'); return capabilities; },
@@ -146,13 +146,22 @@ describe('createAndroidHost', () => {
 
     await expect(host.getCapabilities()).resolves.toEqual(capabilities);
     await host.requestNotifications();
+    await host.openNotificationSettings();
     await host.openOverlaySettings();
     await host.startService();
     await host.showPet();
     await host.hidePet();
     await host.quit();
 
-    expect(calls).toEqual(['notifications', 'overlaySettings', 'start', 'show', 'hide', 'quit']);
+    expect(calls).toEqual([
+      'notifications',
+      'notificationSettings',
+      'overlaySettings',
+      'start',
+      'show',
+      'hide',
+      'quit',
+    ]);
   });
 
   test('forwards strict native capability refresh events', async () => {
@@ -161,7 +170,6 @@ describe('createAndroidHost', () => {
       apiLevel: 28,
       overlayPermission: 'denied',
       notificationPermission: 'notRequired',
-      notificationRequestAttempted: true,
       serviceActive: false,
       petVisible: false,
     };

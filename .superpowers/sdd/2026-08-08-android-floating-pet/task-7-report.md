@@ -125,3 +125,34 @@ Task 7 localization/regression scope and are GREEN below.
   presentation, or task removal. Task 9 instrumentation and Task 10 physical
   device acceptance remain responsible for those checks.
 - The existing Gradle `flatDir` metadata warning remains unchanged.
+
+## Review Findings Follow-up (2026-08-08)
+
+Follow-up base: `8f9a0fde4636badaaeb66d7f0163ac4643932226`
+
+### Corrections
+
+- Hardened the persisted Quit latch so only the explicit Activity launch hook calls `noteUserLaunch`; service `START`, `SHOW`, and `OPEN_REMINDER` intents reject before lifecycle mutation while Quit remains latched.
+- Made the overlay menu Hide path persist `lifecycle.hide()` before removing the view, preserving hidden state across sticky service/process recreation while reminders continue.
+- Split Android 13+ notification state into `notRequested`, `deniedCanAsk`, `blocked`, `granted`, and pre-Android-13 `notRequired`; untouched permission is requested contextually before auto-start, askable denial offers retry, and blocked/repeated denial opens app notification settings. Notification denial remains optional for foreground-service startup.
+- Added a real Activity resume lifecycle boundary that refreshes capabilities, reacts to overlay revocation, and never clears Quit; only explicit user launch clears it.
+- Added native boundary coverage for real `PetOverlayService.onStartCommand`, overlay menu bridge handling, Activity lifecycle resume/user-launch behavior, and BootReceiver/recovery-job suppression after Quit and process recreation.
+- Completed bilingual English/Chinese notification request, retry, blocked explanation, and notification-settings labels.
+
+### Strict TDD evidence
+
+RED:
+
+- `npm run test:run -- src/android/components/AndroidOnboarding.test.tsx src/android/components/AndroidApp.test.tsx src/android/bridge/androidHost.test.ts` failed as intended: 3 files failed, 9 tests failed and 12 passed. Failures covered richer notification states, notification-settings routing, untouched-permission auto-start gating, and blocked-state UI.
+- `./gradlew testDebugUnitTest --tests '*AndroidPermissionContractTest' --tests '*AndroidHostLifecycleTest' --tests '*AndroidServiceLifecycleTest' --tests '*PetOverlayServiceTest' --tests '*ReminderRecoveryQuitTest' --init-script /private/tmp/task6-isolated-build.gradle` failed as intended at native test compilation because the lifecycle boundary and new permission contract did not yet exist and the real service bridge path was inaccessible.
+
+GREEN:
+
+- Focused web tests: 3 files, 21 tests passed in 1.17s.
+- Focused native tests: `BUILD SUCCESSFUL` in 7s.
+- Full Vitest suite: 63 files, 759 tests passed in 9.80s.
+- TypeScript typecheck: passed.
+- Complete native unit/Robolectric suite: `BUILD SUCCESSFUL` in 10s.
+- Bounded `assembleDebug`: `BUILD SUCCESSFUL` in 735ms; 95 tasks, 3 executed and 92 up-to-date. No timeout was required.
+
+The review-fix commit SHA is reported in the final handoff because this report is included in that commit.

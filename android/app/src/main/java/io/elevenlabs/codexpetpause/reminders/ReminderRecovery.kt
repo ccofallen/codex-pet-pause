@@ -24,11 +24,7 @@ internal class JobSchedulerReminderRecovery(
     private val jobs = applicationContext.getSystemService(JobScheduler::class.java)
 
     override fun schedule(triggerAtMillis: Long) {
-        if (!AndroidServiceLifecycle.forContext(applicationContext).snapshot().recoveryAllowed) {
-            cancel()
-            setRecoveryEnabled(false)
-            return
-        }
+        if (ReminderRecoveryEntryPoint(applicationContext).suppressAfterQuit()) return
         val minimumLatency = (triggerAtMillis - clock.now()).coerceAtLeast(0L)
         val overrideDeadline = minimumLatency.saturatingAdd(MAX_RECOVERY_LATENESS_MILLIS)
         val job = JobInfo.Builder(
@@ -60,6 +56,19 @@ internal class JobSchedulerReminderRecovery(
          * recovery to fifteen minutes after the persisted reminder due time.
          */
         const val MAX_RECOVERY_LATENESS_MILLIS = 15 * 60_000L
+    }
+}
+
+internal class ReminderRecoveryEntryPoint(
+    private val context: Context,
+) {
+    fun suppressAfterQuit(): Boolean {
+        if (AndroidServiceLifecycle.forContext(context).snapshot().recoveryAllowed) return false
+        JobSchedulerReminderRecovery(context).apply {
+            cancel()
+            setRecoveryEnabled(false)
+        }
+        return true
     }
 }
 
@@ -120,16 +129,8 @@ class ReminderRecoveryJobService : JobService() {
     private var running: Job? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
+        if (ReminderRecoveryEntryPoint(this).suppressAfterQuit()) return false
         running = scope.launch {
-            if (!AndroidServiceLifecycle.forContext(this@ReminderRecoveryJobService)
-                    .snapshot().recoveryAllowed) {
-                JobSchedulerReminderRecovery(this@ReminderRecoveryJobService).apply {
-                    cancel()
-                    setRecoveryEnabled(false)
-                }
-                jobFinished(params, false)
-                return@launch
-            }
             val clock = SystemReminderClock
             val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(filesDir)
             val engine = ReminderEngine(coordinator, clock)

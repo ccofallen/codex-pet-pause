@@ -142,6 +142,10 @@ class PetOverlayService : Service() {
             quitService()
             return START_NOT_STICKY
         }
+        if (!lifecycle.snapshot().recoveryAllowed) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         val state = when (action) {
             null -> lifecycle.snapshot()
             START -> lifecycle.start()
@@ -413,7 +417,7 @@ class PetOverlayService : Service() {
         }
     }
 
-    private fun handleWebMessage(message: OverlayWebMessage) {
+    internal fun handleWebMessage(message: OverlayWebMessage) {
         when (message) {
             OverlayWebMessage.Ready -> sendState()
             is OverlayWebMessage.BubbleSizeChanged -> {
@@ -425,7 +429,10 @@ class PetOverlayService : Service() {
                     collapseToPet()
                     startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
-                OverlayMenuAction.HIDE -> hideOverlay()
+                OverlayMenuAction.HIDE -> {
+                    lifecycle.hide()
+                    hideOverlay()
+                }
                 OverlayMenuAction.QUIT -> quitService()
             }
             is OverlayWebMessage.ReminderAction -> {

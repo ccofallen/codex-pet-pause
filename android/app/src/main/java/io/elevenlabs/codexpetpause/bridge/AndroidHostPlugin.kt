@@ -32,15 +32,27 @@ private const val KEY_NOTIFICATION_REQUESTED = "notificationRequested"
 class AndroidHostPlugin : Plugin() {
     private lateinit var coordinator: AndroidStateCoordinator
     private lateinit var lifecycle: AndroidServiceLifecycle
+    private lateinit var hostLifecycle: AndroidHostLifecycle
 
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
         lifecycle = AndroidServiceLifecycle.forContext(context)
-        lifecycle.noteUserLaunch()
+        hostLifecycle = AndroidHostLifecycle(
+            serviceLifecycle = lifecycle,
+            canDrawOverlay = { Settings.canDrawOverlays(context) },
+            hideOverlay = {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.HIDE),
+                )
+            },
+            capabilitiesChanged = { notifyCapabilities(capabilitiesJson()) },
+        )
+        hostLifecycle.onUserLaunch()
     }
 
     override fun handleOnResume() {
-        refreshCapabilities()
+        hostLifecycle.onResume()
     }
 
     @PluginMethod
@@ -48,11 +60,14 @@ class AndroidHostPlugin : Plugin() {
 
     @PluginMethod
     fun requestNotifications(call: PluginCall) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return call.resolve(capabilitiesJson())
+        when (permissionCapabilities().notificationPermission) {
+            NotificationPermission.NOT_REQUIRED,
+            NotificationPermission.GRANTED -> return call.resolve(capabilitiesJson())
+            NotificationPermission.BLOCKED -> return openNotificationSettings(call)
+            NotificationPermission.NOT_REQUESTED,
+            NotificationPermission.DENIED_CAN_ASK -> Unit
         }
         permissionPreferences().edit().putBoolean(KEY_NOTIFICATION_REQUESTED, true).apply()
-        if (hasNotificationPermission()) return call.resolve(capabilitiesJson())
         requestPermissionForAlias(
             NOTIFICATION_PERMISSION_ALIAS,
             call,
@@ -65,6 +80,15 @@ class AndroidHostPlugin : Plugin() {
         val capabilities = capabilitiesJson()
         notifyCapabilities(capabilities)
         call.resolve(capabilities)
+    }
+
+    @PluginMethod
+    fun openNotificationSettings(call: PluginCall) {
+        activity.startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+        )
+        call.resolve(capabilitiesJson())
     }
 
     @PluginMethod
@@ -182,6 +206,9 @@ class AndroidHostPlugin : Plugin() {
     }
 
     private fun sendServiceCommand(call: PluginCall, command: String) {
+        if (!lifecycle.snapshot().recoveryAllowed) {
+            return call.reject("app was explicitly quit")
+        }
         val permission = permissionCapabilities()
         if ((command == PetOverlayService.START || command == PetOverlayService.SHOW)
             && !AndroidPermissionContract.canStartService(permission)) {
@@ -202,17 +229,6 @@ class AndroidHostPlugin : Plugin() {
         call.resolve(capabilitiesJson())
     }
 
-    private fun refreshCapabilities() {
-        if (!Settings.canDrawOverlays(context) && lifecycle.snapshot().serviceActive) {
-            lifecycle.permissionRevoked()
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, PetOverlayService::class.java).setAction(PetOverlayService.HIDE),
-            )
-        }
-        notifyCapabilities(capabilitiesJson())
-    }
-
     private fun notifyCapabilities(capabilities: JSObject) {
         notifyListeners(
             "capabilitiesChanged",
@@ -229,14 +245,11 @@ class AndroidHostPlugin : Plugin() {
             .put("overlayPermission", if (permissions.overlayGranted) "granted" else "denied")
             .put("notificationPermission", when (permissions.notificationPermission) {
                 NotificationPermission.NOT_REQUIRED -> "notRequired"
+                NotificationPermission.NOT_REQUESTED -> "notRequested"
+                NotificationPermission.DENIED_CAN_ASK -> "deniedCanAsk"
+                NotificationPermission.BLOCKED -> "blocked"
                 NotificationPermission.GRANTED -> "granted"
-                NotificationPermission.DENIED -> "denied"
             })
-            .put(
-                "notificationRequestAttempted",
-                permissions.notificationPermission == NotificationPermission.NOT_REQUIRED
-                    || permissionPreferences().getBoolean(KEY_NOTIFICATION_REQUESTED, false),
-            )
             .put("serviceActive", state.serviceActive && state.recoveryAllowed)
             .put("petVisible", state.petVisible && permissions.overlayGranted)
     }
@@ -245,6 +258,9 @@ class AndroidHostPlugin : Plugin() {
         apiLevel = Build.VERSION.SDK_INT,
         overlayGranted = Settings.canDrawOverlays(context),
         notificationsGranted = hasNotificationPermission(),
+        notificationRequested = permissionPreferences().getBoolean(KEY_NOTIFICATION_REQUESTED, false),
+        shouldShowRationale = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS),
     )
 
     private fun hasNotificationPermission(): Boolean =

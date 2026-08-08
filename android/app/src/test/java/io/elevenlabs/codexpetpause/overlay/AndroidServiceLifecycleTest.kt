@@ -49,6 +49,20 @@ class AndroidServiceLifecycleTest {
     }
 
     @Test
+    fun backgroundStartAndShowCommandsCannotClearQuit() {
+        val lifecycle = lifecycle()
+        lifecycle.start()
+        lifecycle.quit()
+
+        listOf(lifecycle.start(), lifecycle.show()).forEach { refused ->
+            assertFalse(refused.serviceActive)
+            assertFalse(refused.petVisible)
+            assertFalse(refused.recoveryAllowed)
+            assertTrue(refused.quitRequested)
+        }
+    }
+
+    @Test
     fun permissionRevocationHidesTheOverlayWithoutDisablingBackgroundOperation() {
         val lifecycle = lifecycle()
         lifecycle.start()

@@ -13,7 +13,6 @@ const api28Denied: AndroidCapabilities = {
   apiLevel: 28,
   overlayPermission: 'denied',
   notificationPermission: 'notRequired',
-  notificationRequestAttempted: true,
   serviceActive: false,
   petVisible: false,
 };
@@ -21,8 +20,7 @@ const api28Denied: AndroidCapabilities = {
 const api35Denied: AndroidCapabilities = {
   apiLevel: 35,
   overlayPermission: 'denied',
-  notificationPermission: 'denied',
-  notificationRequestAttempted: false,
+  notificationPermission: 'notRequested',
   serviceActive: false,
   petVisible: false,
 };
@@ -44,9 +42,10 @@ function controlHost(initial: AndroidCapabilities) {
     subscribe: () => () => undefined,
     getCapabilities: vi.fn(async () => capabilities),
     requestNotifications: vi.fn(async () => {
-      capabilities = { ...capabilities, notificationRequestAttempted: true };
+      capabilities = { ...capabilities, notificationPermission: 'deniedCanAsk' };
       return capabilities;
     }),
+    openNotificationSettings: vi.fn(async () => capabilities),
     openOverlaySettings: vi.fn(async () => capabilities),
     startService: vi.fn(async () => {
       capabilities = { ...capabilities, serviceActive: true, petVisible: true };
@@ -116,7 +115,10 @@ test('requests Android 13 notification permission before opening overlay setting
 });
 
 test('rechecks resumed permission state and starts only after overlay permission is granted', async () => {
-  const deniedAfterAttempt = { ...api35Denied, notificationRequestAttempted: true };
+  const deniedAfterAttempt: AndroidCapabilities = {
+    ...api35Denied,
+    notificationPermission: 'deniedCanAsk',
+  };
   const fixture = controlHost(deniedAfterAttempt);
   renderOnboarding(fixture.host);
 
@@ -137,7 +139,7 @@ test('keeps notification retry and deterministic show hide quit controls availab
   const fixture = controlHost({
     ...api35Denied,
     overlayPermission: 'granted',
-    notificationRequestAttempted: true,
+    notificationPermission: 'deniedCanAsk',
     serviceActive: true,
     petVisible: true,
   });
@@ -155,4 +157,58 @@ test('keeps notification retry and deterministic show hide quit controls availab
   expect(fixture.host.showPet).toHaveBeenCalledOnce();
   await user.click(screen.getByRole('button', { name: 'Quit app' }));
   expect(fixture.host.quit).toHaveBeenCalledOnce();
+});
+
+test('requests untouched notification permission before auto-starting an already-authorized overlay', async () => {
+  const user = userEvent.setup();
+  const fixture = controlHost({
+    ...api35Denied,
+    overlayPermission: 'granted',
+  });
+  renderOnboarding(fixture.host, 'en');
+
+  expect(await screen.findByRole('button', { name: 'Allow notifications' })).toBeVisible();
+  expect(fixture.host.startService).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: 'Allow notifications' }));
+
+  expect(fixture.host.requestNotifications).toHaveBeenCalledOnce();
+  await waitFor(() => expect(fixture.host.startService).toHaveBeenCalledOnce());
+});
+
+test('opens app notification settings instead of repeating a blocked permission request', async () => {
+  const user = userEvent.setup();
+  const fixture = controlHost({
+    ...api35Denied,
+    overlayPermission: 'granted',
+    notificationPermission: 'blocked',
+    serviceActive: true,
+  });
+  renderOnboarding(fixture.host, 'en');
+
+  await user.click(await screen.findByRole('button', { name: 'Open notification settings' }));
+
+  expect(fixture.host.openNotificationSettings).toHaveBeenCalledOnce();
+  expect(fixture.host.requestNotifications).not.toHaveBeenCalled();
+});
+
+test('updates blocked notification UI from a fresh Activity-resume capability event', async () => {
+  const fixture = controlHost({
+    ...api35Denied,
+    overlayPermission: 'granted',
+    notificationPermission: 'blocked',
+    serviceActive: true,
+  });
+  renderOnboarding(fixture.host);
+
+  expect(await screen.findByRole('button', { name: '打开通知设置' })).toBeVisible();
+  act(() => fixture.emit({
+    ...api35Denied,
+    overlayPermission: 'granted',
+    notificationPermission: 'granted',
+    serviceActive: true,
+  }));
+
+  await waitFor(() => expect(screen.queryByRole('button', { name: '打开通知设置' }))
+    .not.toBeInTheDocument());
 });

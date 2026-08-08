@@ -1,5 +1,8 @@
 package io.elevenlabs.codexpetpause.overlay
 
+import android.app.Service
+import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.view.WindowManager
@@ -10,6 +13,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -20,6 +25,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class PetOverlayServiceTest {
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+
+    @Before
+    fun resetLifecycle() {
+        AndroidServiceLifecycle.forContext(context).preferences.edit().clear().commit()
+    }
+
+    @After
+    fun cleanupLifecycle() {
+        AndroidServiceLifecycle.forContext(context).preferences.edit().clear().commit()
+    }
+
     @Test
     fun windowUsesTransparentMinimalBoundsLayout() {
         val service = Robolectric.buildService(PetOverlayService::class.java).create().get()
@@ -203,6 +220,55 @@ class PetOverlayServiceTest {
             listOf("显示宠物", "打开设置", "退出"),
             service.buildForegroundNotification().actions.map { it.title.toString() },
         )
+    }
+
+    @Test
+    fun staleStartShowAndOpenReminderIntentsCannotClearQuit() {
+        val lifecycle = AndroidServiceLifecycle.forContext(context)
+        lifecycle.start()
+        lifecycle.quit()
+
+        listOf(
+            PetOverlayService.START,
+            PetOverlayService.SHOW,
+            PetOverlayService.OPEN_REMINDER,
+        ).forEachIndexed { index, action ->
+            val controller = Robolectric.buildService(PetOverlayService::class.java).create()
+            val service = controller.get()
+
+            val result = service.onStartCommand(
+                Intent(context, PetOverlayService::class.java).setAction(action),
+                0,
+                index + 1,
+            )
+
+            assertEquals(Service.START_NOT_STICKY, result)
+            assertFalse(lifecycle.snapshot().serviceActive)
+            assertFalse(lifecycle.snapshot().petVisible)
+            assertTrue(lifecycle.snapshot().quitRequested)
+            controller.destroy()
+        }
+    }
+
+    @Test
+    fun overlayMenuHidePersistsThroughBridgeAndStickyServiceRecreation() {
+        val lifecycle = AndroidServiceLifecycle.forContext(context)
+        lifecycle.start()
+        val firstController = Robolectric.buildService(PetOverlayService::class.java).create()
+        val firstService = firstController.get()
+        val bridge = OverlayJavascriptBridge(firstService::handleWebMessage)
+
+        bridge.postMessage("""{"type":"menu-action","action":"hide"}""")
+
+        assertTrue(lifecycle.snapshot().serviceActive)
+        assertFalse(lifecycle.snapshot().petVisible)
+        firstController.destroy()
+
+        val recreatedController = Robolectric.buildService(PetOverlayService::class.java).create()
+        val recreated = recreatedController.get()
+        assertEquals(Service.START_STICKY, recreated.onStartCommand(null, 0, 2))
+        assertFalse(lifecycle.snapshot().petVisible)
+        recreatedController.destroy()
     }
 
     private fun interpreter() = OverlayGestureInterpreter(

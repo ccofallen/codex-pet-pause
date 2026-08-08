@@ -23,8 +23,7 @@ function deniedControlHost(): AndroidControlHost {
   const capabilities: AndroidCapabilities = {
     apiLevel: 35,
     overlayPermission: 'denied',
-    notificationPermission: 'denied',
-    notificationRequestAttempted: true,
+    notificationPermission: 'deniedCanAsk',
     serviceActive: false,
     petVisible: false,
   };
@@ -42,6 +41,7 @@ function deniedControlHost(): AndroidControlHost {
     subscribe: () => () => undefined,
     getCapabilities: async () => capabilities,
     requestNotifications: async () => capabilities,
+    openNotificationSettings: async () => capabilities,
     openOverlaySettings: async () => capabilities,
     startService: async () => capabilities,
     showPet: async () => capabilities,
