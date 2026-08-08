@@ -35,8 +35,8 @@ test('supports the approved integration call with the browser factory defaulted'
   expect(audio.volume).toBe(0.45);
 });
 
-test('wires the base-aware approved source into the application entry point', () => {
-  expect(readFileSync('src/main.tsx', 'utf8')).toContain(
+test('wires the base-aware approved source into the web application entry point', () => {
+  expect(readFileSync('src/main.web.tsx', 'utf8')).toContain(
     'audio: createBrowserAudio(undefined, `${import.meta.env.BASE_URL}assets/cat/meow.wav`),',
   );
 });
