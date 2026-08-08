@@ -120,6 +120,20 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         return persist(next)
     }
 
+    @Synchronized
+    fun saveOverlayPlacement(xRatio: Double, yRatio: Double): String {
+        require(xRatio.isFinite() && xRatio in 0.0..1.0) { "Invalid overlay x ratio" }
+        require(yRatio.isFinite() && yRatio in 0.0..1.0) { "Invalid overlay y ratio" }
+        val next = snapshot()
+        next.getJSONObject("overlay").put("xRatio", xRatio).put("yRatio", yRatio)
+        if (!next.isNull("settingsJson")) {
+            val settings = JSONObject(next.getString("settingsJson"))
+            settings.getJSONObject("petPosition").put("xRatio", xRatio).put("yRatio", yRatio)
+            next.put("settingsJson", settings.toString())
+        }
+        return persist(next)
+    }
+
     private fun snapshot(): JSONObject = store.readSnapshot()?.let(::JSONObject) ?: defaultSnapshot()
     private fun persist(snapshot: JSONObject): String = snapshot.toString().also(store::writeSnapshot)
     private fun defaultSnapshot() = JSONObject()
