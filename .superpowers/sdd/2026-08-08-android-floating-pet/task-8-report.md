@@ -292,3 +292,23 @@ GREEN:
 - Full native unit/Robolectric suite: BUILD SUCCESSFUL.
 - Android `assembleDebug`: BUILD SUCCESSFUL.
 - All validation used hard timeouts and the supplied JDK 21/Android SDK environment. No command timed out.
+
+## Durable completion lookup under repeated compaction failure (2026-08-08)
+
+- `isCompleted` now reads and bounds the durable completion journal directly without invoking general cleanup, migration, or tombstone compaction.
+- Once journal publication succeeds, released-archive compaction is strictly best-effort. Rename failure is retained for retry on later store operations and cannot escape through completion lookup, matching-claim reconciliation, or FIFO advancement.
+- Cleanup retries uncompacted tombstones on subsequent store access. Per-token uncompacted tombstones count against the existing four-entry pending admission cap, preserving the strict file bound even if every compaction rename continues to fail.
+- The exact regression claims the first token, durably acknowledges it while compaction repeatedly fails, verifies direct completion lookup, clears the matching queue claim, and claims the next FIFO token.
+
+### Final RED/GREEN evidence
+
+RED:
+- Focused native compilation failed on the intentionally missing released-archive publication seam required to inject repeated compaction rename failures.
+
+GREEN:
+- Focused native completion/store/queue suite: BUILD SUCCESSFUL.
+- Full web: 68 files, 794 tests passed.
+- TypeScript typecheck: passed.
+- Full native unit/Robolectric suite: BUILD SUCCESSFUL.
+- Android `assembleDebug`: BUILD SUCCESSFUL.
+- All commands used hard timeouts and the supplied JDK 21/Android SDK environment. No command timed out.

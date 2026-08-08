@@ -27,6 +27,9 @@ internal class PendingPetArchiveStore(
     private val publishCompletedJournal: (File, File) -> Boolean = { source, target ->
         source.renameTo(target)
     },
+    private val publishReleasedArchive: (File, File) -> Boolean = { source, target ->
+        source.renameTo(target)
+    },
 ) {
     private val directory = File(rootDirectory, "pending-pet-archives")
     private val safeToken = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -45,7 +48,9 @@ internal class PendingPetArchiveStore(
             ensureDirectory()
             cleanupLocked()
             val pending = pendingFilesLocked()
-            if (pending.size >= maxPendingArchives) throw PendingArchiveQuotaExceeded()
+            if (pending.size + uncompactedTombstonesLocked().size >= maxPendingArchives) {
+                throw PendingArchiveQuotaExceeded()
+            }
             val committedBytes = directory.listFiles()
                 ?.filter(File::isFile)
                 ?.sumOf(File::length)
@@ -119,13 +124,12 @@ internal class PendingPetArchiveStore(
             throw IOException("Could not release acknowledged pet archive")
         }
         markCompletedLocked(token)
-        compactReleasedArchiveLocked(tombstone)
+        runCatching { compactReleasedArchiveLocked(tombstone) }
     }
 
     fun isCompleted(token: String): Boolean = synchronized(STORE_LOCK) {
         requireSafeToken(token)
-        cleanupLocked()
-        token in completedTokensLocked()
+        token in readDurableCompletedTokensLocked()
     }
 
     fun pendingTokens(): List<String> = synchronized(STORE_LOCK) {
@@ -158,7 +162,7 @@ internal class PendingPetArchiveStore(
                     val token = file.name.removePrefix(".").removeSuffix(".ack")
                     if (safeToken.matches(token) && file.lastModified() > cutoff) {
                         markCompletedLocked(token)
-                        compactReleasedArchiveLocked(file)
+                        runCatching { compactReleasedArchiveLocked(file) }
                     } else {
                         deleteFile(file)
                     }
@@ -188,6 +192,14 @@ internal class PendingPetArchiveStore(
         val bounded = boundedTokens(raw)
         if (raw != bounded) writeCompletedJournalLocked(bounded)
         return bounded
+    }
+
+    private fun readDurableCompletedTokensLocked(): List<String> {
+        val journal = File(directory, COMPLETED_JOURNAL_FILE)
+        if (!journal.isFile) return emptyList()
+        val raw = runCatching { journal.readLines() }
+            .getOrElse { throw IOException("Could not read completion journal", it) }
+        return boundedTokens(raw)
     }
 
     private fun boundedTokens(values: List<String>): List<String> {
@@ -234,7 +246,7 @@ internal class PendingPetArchiveStore(
     private fun compactReleasedArchiveLocked(tombstone: File) {
         if (!tombstone.isFile) return
         val released = File(directory, RELEASED_ARCHIVE_FILE)
-        if (!tombstone.renameTo(released)) {
+        if (!publishReleasedArchive(tombstone, released)) {
             throw IOException("Could not compact released pet archive")
         }
         deleteFile(released)
@@ -244,6 +256,15 @@ internal class PendingPetArchiveStore(
         ?.filter {
             it.isFile && it.name.endsWith(".zip")
                 && safeToken.matches(it.name.removeSuffix(".zip"))
+        }
+        .orEmpty()
+
+    private fun uncompactedTombstonesLocked(): List<File> = directory.listFiles()
+        ?.filter {
+            it.isFile
+                && it.name != RELEASED_ARCHIVE_FILE
+                && it.name.startsWith(".")
+                && it.name.endsWith(".ack")
         }
         .orEmpty()
 

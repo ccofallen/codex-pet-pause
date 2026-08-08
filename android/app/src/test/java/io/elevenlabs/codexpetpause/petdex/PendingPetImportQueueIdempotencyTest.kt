@@ -67,6 +67,35 @@ class PendingPetImportQueueIdempotencyTest {
     }
 
     @Test
+    fun `repeated compaction rename failures cannot block durable completion reconciliation`() {
+        var compactionAttempts = 0
+        val root = root()
+        val store = PendingPetArchiveStore(
+            rootDirectory = root,
+            publishReleasedArchive = { _, _ ->
+                compactionAttempts += 1
+                false
+            },
+        )
+        val first = add(store)
+        val second = add(store)
+        val queue = PendingPetImportQueue(store)
+        queue.nextAnnouncement()
+        queue.claim(first.token)
+
+        store.acknowledge(first.token)
+        assertTrue(store.isCompleted(first.token))
+        assertEquals(second.token, queue.finish(first.token, PendingArchiveOutcome.IMPORTED))
+        assertEquals(second.token, queue.claim(second.token).name.substringAfter("pet-").removeSuffix(".zip"))
+        assertTrue(compactionAttempts >= 2)
+
+        val directory = File(root, "pending-pet-archives")
+        assertEquals(1, directory.listFiles().orEmpty().count {
+            it.name.startsWith(".") && it.name.endsWith(".ack")
+        })
+    }
+
+    @Test
     fun `missing file for the current claim releases it and advances FIFO`() {
         val store = PendingPetArchiveStore(root())
         val first = add(store)
