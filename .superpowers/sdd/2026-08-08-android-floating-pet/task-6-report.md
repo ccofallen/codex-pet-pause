@@ -173,3 +173,71 @@ the expected RED for the six review findings.
 - Gradle retains the existing `flatDir` metadata warning.
 - The report and implementation intentionally exclude `release/`,
   `dist-android/`, generated Capacitor Gradle files, and the main progress ledger.
+
+## Remaining-findings follow-up
+
+Implementation commit:
+`89790d845322fc5c27dcd6ab6daf51968e1d80ab`
+
+### Implementation
+
+- `JobSchedulerReminderRecovery` now retains the persisted job and due-time
+  minimum latency while adding `setOverrideDeadline(minimumLatency + grace)`.
+  `MAX_RECOVERY_LATENESS_MILLIS` centralizes a documented 15-minute grace
+  window, and saturating addition prevents overflow. Due-now and past-due jobs
+  clamp minimum latency to zero while retaining the full non-zero grace window.
+- Reminder runtime merge identity now contains only schedule timing fields:
+  reminder ID, enabled state, and interval. Custom labels and preset copy remain
+  presentation fields, so a stale label rename applies its new text without
+  replacing an already committed snooze/status/deadline. A real interval change
+  remains schedule-changing and accepts the caller's recomputed runtime.
+- Added deterministic threaded tests for snooze-first/rename-second and
+  rename-first/snooze-second ordering, plus an interval/deadline-changing
+  control case.
+
+### TDD evidence
+
+The focused tests were authored before the production edits. Initial bounded
+in-place Gradle attempts could not reach Kotlin or Robolectric: repository build
+intermediates contained invalid conflict-copy names such as
+`cat_meow 2.wav` and `ic_launcher_background 2.xml`, and later resource tasks
+exceeded their 30/60-second bounds. Each task-local process was stopped with
+exit 130. These infrastructure failures are not counted as behavioral RED.
+
+An isolated `/private/tmp` Gradle build then reached the new tests. Its first run
+reported three failures because the custom fixture incorrectly replaced a
+required preset and reused a reserved preset ID. The fixture was corrected to
+retain all four Task 2 presets and add a fifth valid custom reminder. No clean
+pre-implementation behavior-level RED execution was captured; this limitation
+is recorded rather than relabeling an infrastructure/schema failure as RED.
+
+### GREEN evidence
+
+1. Focused native/Robolectric:
+   `./gradlew testDebugUnitTest --tests '*ReminderEngineTest' --init-script /private/tmp/task6-isolated-build.gradle`
+   Result: `BUILD SUCCESSFUL` in 3 seconds; 20 tests passed, including future,
+   due-now, and past-due recovery windows, both threaded rename/snooze
+   orderings, and the schedule-changing control.
+2. Focused renderer:
+   `npm run test:run -- src/android/components/AndroidReminderBubble.test.tsx`
+   Result: 1 file passed, 5 tests passed.
+3. Accepted queue/action regression gate:
+   `npm run test:run -- src/android/components/AndroidReminderBubble.test.tsx src/features/cat/components/CatReminderBubble.test.tsx src/features/reminders/components/ActionCard.test.tsx`
+   Result: 3 files passed, 38 tests passed.
+4. TypeScript:
+   `npm run typecheck`
+   Result: exit 0.
+5. Complete native unit/Robolectric:
+   `./gradlew testDebugUnitTest --init-script /private/tmp/task6-isolated-build.gradle`
+   Result: `BUILD SUCCESSFUL` in 3 seconds.
+6. APK assembly:
+   Not run. Task 9/10 continues to own APK/device packaging.
+
+### Remaining risks
+
+- Robolectric verifies `JobInfo` latency/deadline construction but not real
+  device/OEM scheduling behavior. Task 9/10 device acceptance should confirm the
+  observed maximum lateness under idle and background restrictions.
+- The repository-local Gradle build intermediates remain polluted by untracked
+  conflict-copy filenames. Validation used isolated temporary build directories
+  and did not delete, modify, or commit those generated artifacts.
