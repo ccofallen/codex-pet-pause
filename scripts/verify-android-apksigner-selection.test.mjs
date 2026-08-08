@@ -23,4 +23,5 @@ test('Android release verification uses the pinned apksigner from the workflow',
     releaseWorkflow,
     /ANDROID_APKSIGNER="\$APKSIGNER" node scripts\/verify-android-release\.mjs/u,
   );
+  assert.match(releaseWorkflow, /GH_REPO: \$\{\{ github\.repository \}\}/u);
 });

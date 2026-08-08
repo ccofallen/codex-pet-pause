@@ -102,6 +102,7 @@ jobs:
       - name: Publish validated draft atomically
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_DIR: ${{ runner.temp }}/release
         shell: bash
         run: |
