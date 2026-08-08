@@ -1,5 +1,20 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+
+def releaseVersion = new JsonSlurper().parse(rootProject.file('../package.json')).version as String
+def releaseVersionMatch = releaseVersion =~ /^(\d+)\.(\d+)\.(\d+)$/
+if (!releaseVersionMatch.matches()) {
+    throw new GradleException("Android release version must be major.minor.patch: ${releaseVersion}")
+}
+def releaseMajor = releaseVersionMatch[0][1].toInteger()
+def releaseMinor = releaseVersionMatch[0][2].toInteger()
+def releasePatch = releaseVersionMatch[0][3].toInteger()
+if (releaseMinor > 99 || releasePatch > 99) {
+    throw new GradleException("Android release minor and patch versions must be at most 99: ${releaseVersion}")
+}
+def androidVersionCode = (releaseMajor * 1000000) + (releaseMinor * 10000) + (releasePatch * 100)
 
 def localSigningPropertiesPath = System.getenv('ANDROID_SIGNING_PROPERTIES') ?:
     rootProject.file('../.signing/signing.properties').absolutePath
@@ -35,8 +50,8 @@ android {
         applicationId "io.elevenlabs.codexpetpause"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 30000
-        versionName "0.3.0"
+        versionCode androidVersionCode
+        versionName releaseVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

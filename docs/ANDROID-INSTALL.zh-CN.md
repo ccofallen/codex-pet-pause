@@ -68,6 +68,10 @@ Codex Pet Pause 会在需要时解释权限，不会在启动时一次请求全�
 或遥测。只要新 APK 使用同一正式密钥签名，直接覆盖安装即可保留本地数据。除非希望
 删除全部应用数据，否则升级前不要卸载。
 
+Codex Pet Pause 已禁用 Android 云备份和设备迁移备份，因此私有设置、历史、提醒和导入
+宠物不会上传到云备份，也不会恢复到另一台设备。此本地存储策略不会阻止覆盖安装新版
+APK 时保留数据；卸载应用仍会删除私有数据。
+
 Android 更新通过 [GitHub Releases](https://github.com/ccofallen/codex-pet-pause/releases)
 提供，不会静默自动更新。下载新 APK、验证校验和，然后覆盖安装当前版本。
 
@@ -85,8 +89,7 @@ Android 更新通过 [GitHub Releases](https://github.com/ccofallen/codex-pet-pa
 
 ## 故障排除
 
-- **APK 无法安装：**确认设备为 arm64 且系统不低于 Android 9，重新下载两个文件并
-  验证 SHA-256。
+- **APK 无法安装：**确认系统不低于 Android 9，重新下载两个文件并验证 SHA-256。
 - **宠物只在设置页内显示：**允许“显示在其他应用上层”，返回应用并选择“显示宠物”。
 - **没有提醒：**开启通知、检查勿扰模式，并按照上面的电池建议调整设置。
 - **升级后仍是旧版本：**不要卸载，直接安装新版已签名 APK。如果 Android 报告签名
@@ -127,10 +130,10 @@ npm run check:android-release
 设置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`
 和 `ANDROID_STORE_PASSWORD`，命令不会在终端显示凭据。
 
-推送 `v0.3.0` 会同时启动 Android 和桌面 GitHub Actions 工作流。Android 工作流执行
-干净的 arm64 正式构建并验证签名，只上传精确命名的 APK 与校验和；桌面工作流继续发布
-macOS arm64 与 x64、Windows x64、Linux x64 资产，清理过滤器不会删除 Android 资产。
-自动检查、独立审查和实体设备验收全部完成前，不要创建标签。
+推送 `v0.3.0` 会启动一个协调发布工作流。只读 Android 与桌面产物工作流分别构建并验证
+通用 APK/校验和、macOS arm64 与 x64、Windows x64、Linux AppImage 与 deb；全部验证
+通过后，唯一拥有 `contents: write` 的发布任务才会更新 GitHub Release，并保留无关的
+既有资产。自动检查、独立审查和实体设备验收全部完成前，不要创建标签。
 
 ### 通用 APK 兼容性
 

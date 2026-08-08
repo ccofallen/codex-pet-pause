@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Minimum supported system is Android 9 / API 28.
-- Initial release artifact is a signed `arm64-v8a` APK distributed through GitHub Releases.
+- Initial release artifact is a signed universal pure-JVM/WebView APK with no native `.so` libraries, compatible with arm64 devices distributed through GitHub Releases.
 - Medium is the default phone pet size: small `56dp`, medium `72dp`, large `96dp`.
 - Android storage, permissions, lifecycle, CSS, and entry points must remain isolated from Electron and web hosts.
 - Existing macOS, Windows, Linux, web behavior, persistence, packaging, and release artifacts must remain unchanged.
@@ -72,11 +72,11 @@
 
 ### Build and release files
 
-- `.github/workflows/build-android.yml`: validation, signed APK build, digest, and release upload.
-- `.github/workflows/build-desktop.yml`: restrict release cleanup to desktop-owned assets so it cannot delete Android artifacts.
-- `scripts/verify-android-release.mjs`: inspect artifact name, architecture, version, and digest.
+- `.github/workflows/build-android.yml`: validation, signed universal APK build, digest, and artifact upload to the coordinated publisher.
+- `.github/workflows/build-desktop.yml`: produce and validate the unchanged desktop asset matrix for the coordinated publisher.
+- `scripts/verify-android-release.mjs`: inspect artifact name, native-library absence, version, and digest.
 - `scripts/verify-android-release.test.mjs`: release verifier fixtures.
-- `scripts/verify-desktop-workflow.test.mjs`: prove desktop publishing preserves Android assets.
+- `scripts/verify-desktop-workflow.test.mjs`: prove the desktop producer preserves its complete platform matrix without publishing directly.
 - `docs/ANDROID-INSTALL.md`, `docs/ANDROID-INSTALL.zh-CN.md`: permissions, installation, persistence, and recovery guidance.
 - `README.md`, `README.zh-CN.md`: Android download link and concise platform description.
 
@@ -806,7 +806,7 @@ git commit -m "test: cover Android floating pet flows"
 
 **Interfaces:**
 - Consumes: Gradle `assembleRelease`, encrypted `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `ANDROID_STORE_PASSWORD` secrets.
-- Produces: `Codex-Pet-Pause-<version>-android-arm64.apk` plus `.sha256` in the same tagged GitHub Release as desktop assets.
+- Produces: `Codex-Pet-Pause-<version>-android-universal.apk` plus `.sha256` in the same coordinated tagged GitHub Release as the complete desktop asset set.
 
 - [ ] **Step 1: Write failing artifact and workflow tests**
 
@@ -814,8 +814,8 @@ git commit -m "test: cover Android floating pet flows"
 test('accepts exactly one signed arm64 APK and matching digest', async () => {
   const result = await verifyAndroidRelease(fixtureDir, '0.3.0');
   assert.deepEqual(result.assets, [
-    'Codex-Pet-Pause-0.3.0-android-arm64.apk',
-    'Codex-Pet-Pause-0.3.0-android-arm64.apk.sha256',
+    'Codex-Pet-Pause-0.3.0-android-universal.apk',
+    'Codex-Pet-Pause-0.3.0-android-universal.apk.sha256',
   ]);
 });
 
@@ -848,7 +848,7 @@ Extend `verify-desktop-workflow.test.mjs` with an Android fixture asset and asse
 that the cleanup filter does not select it. This is a release-safety correction;
 desktop build matrices, commands, artifact names, and binaries stay unchanged.
 
-Configure the release build with `abiFilters 'arm64-v8a'` and bump the shared
+Configure the release build with `abiFilters 'universal pure-JVM/WebView'` and bump the shared
 application version to `0.3.0` before creating tag `v0.3.0`.
 
 Document sideload installation, unknown-source permission, notification and
@@ -899,5 +899,7 @@ git commit -m "build: package signed Android releases"
 - [ ] An attached pet retracts only after a second outward swipe.
 - [ ] Buttons fit the safe phone area and no reminder action requires scrolling.
 - [ ] Settings and imported pets survive Activity closure, service restoration, relaunch, and upgrade.
-- [ ] The APK is signed, arm64-only, reproducibly named, and accompanied by SHA-256.
+- [ ] The APK is signed, universal, reproducibly named, and accompanied by SHA-256.
 - [ ] The complete existing desktop release gate passes before tagging.
+
+Android backup is disabled for app-private settings, history, reminder state, and imported pets; same-key in-place APK upgrades still preserve local data.

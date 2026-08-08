@@ -111,3 +111,5 @@ Codex Pet Pause is released under the [MIT License](LICENSE).
 ### Universal APK compatibility
 
 The universal Android APK contains no native `.so` libraries. It is a pure JVM/WebView package compatible with arm64 devices and other CPU architectures supported by the Android runtime and system WebView.
+
+Android backup is disabled for app-private data. Same-key in-place APK upgrades preserve local data, while uninstalling removes it. Tag releases use one coordinated publisher only after the complete Android and desktop artifact sets validate.

@@ -109,3 +109,5 @@ Codex Pet Pause 以 [MIT 许可证](LICENSE)发布。
 ### 通用 APK 兼容性
 
 通用 Android APK 不包含任何原生 `.so` 库，是纯 JVM/WebView 软件包；它兼容 arm64 设备，也兼容 Android 运行时和系统 WebView 支持的其他 CPU 架构。
+
+Android 应用私有数据备份已禁用；同一密钥签名的 APK 覆盖升级会保留本地数据，卸载则会删除数据。标签发布仅在完整 Android 与桌面产物全部验证后由一个协调发布任务执行。

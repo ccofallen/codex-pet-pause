@@ -74,6 +74,11 @@ Pause has no account, cloud sync, or telemetry. Installing a newer APK from this
 repository over the existing app preserves local data when it is signed with the same
 release key. Do not uninstall first unless you intend to delete local app data.
 
+Android backup and device-transfer backup are disabled for Codex Pet Pause, so the app's
+private settings, history, reminders, and imported pets are not copied to a cloud backup
+or restored onto another device. This local-only policy does not prevent an in-place APK
+upgrade from preserving data; uninstalling the app still deletes its private data.
+
 Android APK updates are delivered through
 [GitHub Releases](https://github.com/ccofallen/codex-pet-pause/releases); there is no
 silent in-app updater. Download the newer APK and verify its checksum before installing
@@ -95,8 +100,8 @@ optimization**, **Background activity**, **Auto-start**, or **Display over other
 
 ## Troubleshooting
 
-- **The APK will not install:** confirm the device is arm64 and Android 9 or newer,
-  then redownload both files and verify SHA-256.
+- **The APK will not install:** confirm the device runs Android 9 or newer, then
+  redownload both files and verify SHA-256.
 - **The pet is visible only inside settings:** grant **Display over other apps**, return
   to Codex Pet Pause, and choose Show Pet.
 - **No reminders appear:** enable notifications, check Do Not Disturb, and review the
@@ -175,12 +180,12 @@ sed -n 's/^storePassword=//p' .signing/signing.properties \
   | gh secret set ANDROID_STORE_PASSWORD
 ```
 
-Pushing `v0.3.0` starts the Android and desktop GitHub Actions workflows. The Android
-workflow performs a clean arm64 release build, verifies it, and uploads only the exact
-APK and checksum paths. The desktop workflow continues publishing macOS arm64 and x64,
-Windows x64, and Linux x64 assets, and its cleanup filter cannot delete Android assets.
-Do not create the tag until all automated gates, independent review, and physical-device
-acceptance are complete.
+Pushing `v0.3.0` starts one coordinated release workflow. It calls read-only Android and
+desktop artifact producers, validates the universal APK/checksum and every macOS arm64,
+macOS x64, Windows x64, Linux AppImage, and Linux deb asset, then allows one publisher job
+to update the GitHub Release. The publisher preserves unrelated existing assets and is the
+only job with `contents: write`. Do not create the tag until all automated gates,
+independent review, and physical-device acceptance are complete.
 
 ### Universal APK compatibility
 

@@ -6,13 +6,16 @@ Release date: 2026-08-08
 
 ## Android floating pet
 
-- Adds the first signed Android package for Android 9+ arm64 phones.
+- Adds the first signed universal pure-JVM/WebView Android package for Android 9+,
+  including arm64 devices.
 - Keeps the pet in a foreground overlay with explicit notification, overlay, Show Pet,
   Hide Pet, settings, and Quit controls.
 - Supports queued and custom reminders, reboot recovery, local pet imports, and the
   sandboxed Petdex handoff.
 - Preserves settings, reminders, activity history, and imported pets locally without
   accounts, cloud sync, or telemetry.
+- Disables Android cloud and device-transfer backup for app-private data while preserving
+  data during same-key in-place APK upgrades.
 
 Follow the [Android installation and permission guide](ANDROID-INSTALL.md) before
 sideloading.
@@ -29,11 +32,11 @@ The `v0.3.0` GitHub Release is prepared to contain:
 - `Codex-Pet-Pause-0.3.0-linux-x64.AppImage`
 - `Codex-Pet-Pause-0.3.0-linux-x64.deb`
 
-The Android workflow builds one universal pure-JVM/WebView APK with no native `.so`
-libraries, verifies the release certificate, manifest identity and version, packaged web
-content, permissions, and SHA-256,
-then uploads only the APK and checksum. Desktop workflow matrices, package commands,
-architectures, and asset names remain unchanged.
+The read-only Android producer builds one universal pure-JVM/WebView APK with no native
+`.so` libraries and verifies the pinned release certificate, manifest identity, exact
+version, packaged web content, permissions, and SHA-256. The read-only desktop producer
+keeps its existing package matrix and asset names. One dependent publisher validates both
+complete sets before updating the GitHub Release without deleting unrelated assets.
 
 ## Publishing gate
 

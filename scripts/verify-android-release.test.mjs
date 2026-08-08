@@ -27,7 +27,7 @@ function validInspection(overrides = {}) {
   return {
     signatureVerified: true,
     signerDn: 'CN=Codex Pet Pause, O=Codex Pet Pause, C=GB',
-    signerSha256: 'AA:BB:CC:DD',
+    signerSha256: 'c59972e77d310df610465cabe668f3569de9630bb64c687cc7677f433f129e56',
     packageName: 'io.elevenlabs.codexpetpause',
     versionName: version,
     versionCode: 30000,
@@ -37,13 +37,14 @@ function validInspection(overrides = {}) {
       'assets/public/assets/index-release.js',
     ],
     forbiddenDevelopmentUrls: [],
+    capacitorServerUrlPresent: false,
     ...overrides,
   };
 }
 
 async function fixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codex-android-release-'));
-  const apk = options.apkContents ?? Buffer.from('signed arm64 release apk');
+  const apk = options.apkContents ?? Buffer.from('signed universal release apk');
   const digest = createHash('sha256').update(apk).digest('hex');
   await writeFile(join(directory, apkName), apk);
   await writeFile(
@@ -131,7 +132,7 @@ test('rejects wrong manifest identity, stale version codes, and permission creep
   const cases = [
     ['package', { packageName: 'example.debug' }, /package must be io\.elevenlabs\.codexpetpause/],
     ['version name', { versionName: '0.2.6' }, /versionName must be 0\.3\.0/],
-    ['version code', { versionCode: 1 }, /versionCode must be at least 30000/],
+    ['version code', { versionCode: 30001 }, /versionCode must be exactly 30000/],
     [
       'permission',
       { permissions: [...expectedPermissions, 'android.permission.READ_CONTACTS'] },
@@ -147,27 +148,30 @@ test('rejects wrong manifest identity, stale version codes, and permission creep
   }
 });
 
-test('Android workflow validates debug builds and publishes only exact signed tag assets', async () => {
+test('Android workflow validates debug builds and uploads exact coordinated release assets', async () => {
   const workflow = parse(await readFile('.github/workflows/build-android.yml', 'utf8'));
   assert.deepEqual(verifyAndroidWorkflow(workflow), []);
 });
 
-test('Android workflow verifier rejects missing secret guards and broad release uploads', async () => {
+test('Android workflow verifier rejects missing secret guards and keystore cleanup', async () => {
   const workflow = parse(await readFile('.github/workflows/build-android.yml', 'utf8'));
   const invalid = structuredClone(workflow);
   invalid.jobs.build.steps = invalid.jobs.build.steps.filter(
-    (step) => !['Require Android release signing secrets', 'Publish Android release assets'].includes(step.name),
+    (step) => ![
+      'Require Android release signing secrets',
+      'Clean up Android release keystore',
+    ].includes(step.name),
   );
   const failures = verifyAndroidWorkflow(invalid);
   assert.ok(failures.some((failure) => failure.includes('fail closed')));
-  assert.ok(failures.some((failure) => failure.includes('two exact Android paths')));
+  assert.ok(failures.some((failure) => failure.includes('cleanup must always run')));
 });
 
 test('Android workflow verifier rejects an architecture-specific staged filename', async () => {
   const workflow = parse(await readFile('.github/workflows/build-android.yml', 'utf8'));
   const invalid = structuredClone(workflow);
   const stage = invalid.jobs.build.steps.find(
-    (step) => step.name === 'Stage deterministic Android release assets',
+    (step) => step.name === 'Stage named Android release assets',
   );
   stage.run = stage.run.replace('android-universal.apk', 'android-arm64.apk');
   assert.ok(

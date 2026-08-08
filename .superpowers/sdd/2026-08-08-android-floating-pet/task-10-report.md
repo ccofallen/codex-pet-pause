@@ -26,14 +26,14 @@ Checksum path:
 
 SHA-256:
 
-`62a888e34f8a411ebaa077e59e0993fff99aa3eda9b97dd26d49185f0b61b00c`
+`681e8241a17e942cb25a6aabf1d893c91bacebbfda27c9107dd0181c03efac1d`
 
-Artifact size: `10550932` bytes
+Artifact size: `10552144` bytes
 
 The checksum file contains exactly:
 
 ```text
-62a888e34f8a411ebaa077e59e0993fff99aa3eda9b97dd26d49185f0b61b00c  Codex-Pet-Pause-0.3.0-android-universal.apk
+681e8241a17e942cb25a6aabf1d893c91bacebbfda27c9107dd0181c03efac1d  Codex-Pet-Pause-0.3.0-android-universal.apk
 ```
 
 The artifact and checksum are ignored local outputs. They are not included in the source commit. Existing untracked `release/` assets were not modified or deleted. The regenerated untracked `dist-android/` output was accepted by the user and is not included in the source commit.
@@ -139,3 +139,68 @@ No GitHub secret was configured. No tag was created. No GitHub Release was creat
 ## Remaining device-only gap
 
 Automated verification cannot prove OEM-specific behavior on physical hardware. The remaining release gate is a manual install on a real arm64 Android device followed by overlay approval, Android 13+ notification approval where applicable, floating-pet interaction, foreground-service persistence, reminder delivery, and reboot recovery checks.
+
+## Post-review release-safety remediation
+
+Review range: `12f0c92..d1d0868`
+
+The review findings were addressed with a second RED/GREEN cycle. The initial focused
+safety suite failed all `9/9` review contracts before implementation. An additional
+draft-publication and explicit-backup-rules cycle then failed `2/10` contracts before
+those protections were added. The final combined release contract run passed `75/75`.
+
+- Android verifies `scripts/verify-release-tag.mjs` before any signing step.
+- Android and desktop workflows are read-only reusable artifact producers and no longer
+  publish GitHub Releases directly or trigger independently for tags.
+- One tag-triggered publisher waits for both producers, revalidates the complete desktop
+  and Android artifact directories, and is the only job granted `contents: write`.
+- First publication is created as a draft only after validation, all seven validated
+  assets are uploaded with `--clobber`, and the release is made public only after upload.
+  Reruns preserve unrelated existing assets and update the same names idempotently.
+- The intended Android signer certificate SHA-256 is pinned to
+  `c59972e77d310df610465cabe668f3569de9630bb64c687cc7677f433f129e56`.
+- Packaged `assets/capacitor.config.json` is parsed as JSON and `server.url` must be
+  absent; local development and remote WebView endpoints are rejected.
+- Android `versionCode` is derived from the exact semantic release version and must be
+  exactly `30000` for `0.3.0`.
+- `android:allowBackup="false"`, legacy full-backup exclusions, and Android 12+ cloud
+  backup/device-transfer exclusions disable backup of app-private data. Same-key in-place
+  APK upgrades still preserve local data; uninstalling removes it.
+- Temporary CI signing uses `umask 077`, a mode-`700` directory, a mode-`600`
+  keystore, and an unconditional cleanup step.
+- External Actions are pinned to immutable commit SHAs. Gradle `8.14.3-all` is pinned
+  with distribution SHA-256
+  `ed1a8d686605fd7c23bdf62c7fc7add1c5b23b2bbc3721e661934ef4a4911d7c`.
+- These controls improve dependency and workflow reproducibility; they do not claim that
+  independently produced APK bytes are bit-for-bit reproducible.
+
+### Post-review bounded verification
+
+| Gate | Result |
+| --- | --- |
+| Combined release contracts | PASS, 75/75 |
+| Pinned actionlint 1.7.12 on all three workflows | PASS |
+| TypeScript | PASS |
+| Full Vitest | PASS, 68 files and 794 tests |
+| Android JVM | PASS in 19s |
+| Android sync, lint, and debug APK | PASS in 24s |
+| Desktop release config | PASS, 11/11 |
+| Electron regressions | PASS, 3 files and 10 tests |
+| macOS signing hooks | PASS, 2/2 |
+| Packaged resource tests | PASS, 7/7 |
+| Packaged app tests | PASS, 4/4 |
+| Web and desktop builds plus packaged-resource smoke | PASS |
+| Full Playwright | PASS, 40/40 in 23.5s |
+| Clean signed universal release | PASS in 19s |
+| `apksigner` plus hardened artifact verifier | PASS |
+
+The regenerated artifact is `10552144` bytes with SHA-256
+`681e8241a17e942cb25a6aabf1d893c91bacebbfda27c9107dd0181c03efac1d`.
+No command timed out or remains running during this remediation.
+
+### Residual limitation
+
+Automated tests validate the manifest backup declarations and exclusion resources but
+cannot prove every OEM's device-transfer implementation. Physical arm64-device acceptance
+remains required for installation, overlay/notification permission flow, foreground
+service persistence, reminders, reboot recovery, and OEM backup/device-transfer behavior.

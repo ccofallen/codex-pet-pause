@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const applicationId = 'io.elevenlabs.codexpetpause';
-const minimumVersionCode = 30000;
+const expectedSignerSha256 = 'c59972e77d310df610465cabe668f3569de9630bb64c687cc7677f433f129e56';
 const allowedPermissions = new Set([
   'android.permission.FOREGROUND_SERVICE',
   'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
@@ -20,18 +20,24 @@ const allowedPermissions = new Set([
 ]);
 const developmentUrlPattern =
   /(?:https?|wss?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2)(?::\d+)?/giu;
-const tagPushCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')";
 const androidTestRun = 'npm run test:run -- src/android src/i18n src/features/pets';
 const releaseBuildRun = 'cd android && ./gradlew --no-daemon clean :app:assembleRelease';
-const releaseUploadRun =
-  'if ! gh release view "$GITHUB_REF_NAME"; then\n'
-  + '  gh release create "$GITHUB_REF_NAME" --generate-notes --title "Codex Pet Pause $GITHUB_REF_NAME" '
-  + '|| gh release view "$GITHUB_REF_NAME"\n'
-  + 'fi\n'
-  + 'gh release upload "$GITHUB_REF_NAME" "$ANDROID_APK" "$ANDROID_CHECKSUM" --clobber\n';
 
 function failure(message) {
   throw new Error(message);
+}
+
+export function androidVersionCodeFor(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/u);
+  if (match === null) failure(`Android release version must be major.minor.patch; found ${version}.`);
+  const [, majorText, minorText, patchText] = match;
+  const major = Number.parseInt(majorText, 10);
+  const minor = Number.parseInt(minorText, 10);
+  const patch = Number.parseInt(patchText, 10);
+  if (minor > 99 || patch > 99) {
+    failure(`Android release minor and patch versions must be at most 99; found ${version}.`);
+  }
+  return (major * 1_000_000) + (minor * 10_000) + (patch * 100);
 }
 
 async function findBuildTool(name) {
@@ -97,6 +103,29 @@ async function inspectApkWithAndroidSdk(apkPath) {
   const entries = (await run(unzip, ['-Z1', apkPath])).stdout
     .split(/\r?\n/u)
     .filter(Boolean);
+  const capacitorConfigEntry = 'assets/capacitor.config.json';
+  if (!entries.includes(capacitorConfigEntry)) {
+    failure('Android APK is missing assets/capacitor.config.json.');
+  }
+  const capacitorConfigOutput = (
+    await run(unzip, ['-p', apkPath, capacitorConfigEntry], { encoding: 'buffer' })
+  ).stdout;
+  const capacitorConfigContents = Buffer.isBuffer(capacitorConfigOutput)
+    ? capacitorConfigOutput.toString('utf8')
+    : String(capacitorConfigOutput);
+  let capacitorConfig;
+  try {
+    capacitorConfig = JSON.parse(capacitorConfigContents);
+  } catch (error) {
+    throw new Error(`Packaged assets/capacitor.config.json is invalid JSON: ${error.message}`);
+  }
+  const capacitorServer = capacitorConfig?.server;
+  const capacitorServerUrlPresent = (
+    capacitorServer !== null
+    && typeof capacitorServer === 'object'
+    && Object.hasOwn(capacitorServer, 'url')
+  );
+  const capacitorServerUrl = capacitorServerUrlPresent ? capacitorServer.url : undefined;
   const forbiddenDevelopmentUrls = [];
   const scannableEntries = entries.filter((entry) => (
     entry === 'assets/capacitor.config.json'
@@ -120,6 +149,8 @@ async function inspectApkWithAndroidSdk(apkPath) {
     versionCode: Number.parseInt(extractQuotedValue(packageLine, 'versionCode') ?? '', 10),
     permissions,
     entries,
+    capacitorServerUrlPresent,
+    capacitorServerUrl,
     forbiddenDevelopmentUrls: [...new Set(forbiddenDevelopmentUrls)],
   };
 }
@@ -134,15 +165,22 @@ function validateInspection(inspection, expectedVersion) {
   if (/android debug/iu.test(inspection.signerDn)) {
     failure('Android APK uses the Android debug signing certificate.');
   }
+  const signerSha256 = inspection.signerSha256.replaceAll(':', '').toLowerCase();
+  if (signerSha256 !== expectedSignerSha256) {
+    failure(
+      `Android release signer certificate SHA-256 fingerprint must be ${expectedSignerSha256}; found ${signerSha256}.`,
+    );
+  }
   if (inspection.packageName !== applicationId) {
     failure(`Android package must be ${applicationId}; found ${inspection.packageName ?? 'none'}.`);
   }
   if (inspection.versionName !== expectedVersion) {
     failure(`Android versionName must be ${expectedVersion}; found ${inspection.versionName ?? 'none'}.`);
   }
-  if (!Number.isInteger(inspection.versionCode) || inspection.versionCode < minimumVersionCode) {
+  const expectedVersionCode = androidVersionCodeFor(expectedVersion);
+  if (inspection.versionCode !== expectedVersionCode) {
     failure(
-      `Android versionCode must be at least ${minimumVersionCode}; found ${inspection.versionCode}.`,
+      `Android versionCode must be exactly ${expectedVersionCode}; found ${inspection.versionCode}.`,
     );
   }
 
@@ -160,6 +198,11 @@ function validateInspection(inspection, expectedVersion) {
   }
   if (!entries.some((entry) => /^assets\/public\/.+\.js$/u.test(entry))) {
     failure('Android APK is missing its production JavaScript bundle.');
+  }
+  if (inspection.capacitorServerUrlPresent === true) {
+    failure(
+      `Packaged assets/capacitor.config.json server.url must be absent; found ${String(inspection.capacitorServerUrl)}.`,
+    );
   }
   if ((inspection.forbiddenDevelopmentUrls ?? []).length > 0) {
     failure(
@@ -231,6 +274,7 @@ export async function verifyAndroidRelease(
     nativeLibraries,
     compatibility,
     arm64Compatible,
+    capacitorServerUrlPresent: inspection.capacitorServerUrlPresent === true,
     signerDn: inspection.signerDn,
     signerSha256: inspection.signerSha256,
     permissions: [...inspection.permissions].sort(),
@@ -243,47 +287,61 @@ function hasRun(job, command) {
 
 export function verifyAndroidWorkflow(workflow) {
   const failures = [];
+  const releaseCondition = "inputs.release_tag != ''";
+  const debugCondition = "inputs.release_tag == ''";
   const push = workflow?.on?.push;
   if (!push?.branches?.includes('main')) failures.push('Android workflow pushes must include main');
-  if (!push?.tags?.includes('v*')) failures.push('Android workflow pushes must include v* tags');
+  if (push?.tags !== undefined) failures.push('Android producer must not run independently for tags');
   if (workflow?.on?.pull_request === undefined) failures.push('Android workflow must run for pull requests');
-  if (workflow?.on?.workflow_dispatch === undefined) {
-    failures.push('Android workflow must support manual dispatch');
+  if (workflow?.on?.workflow_dispatch === undefined) failures.push('Android workflow must support manual dispatch');
+  if (workflow?.on?.workflow_call?.inputs?.release_tag === undefined) {
+    failures.push('Android workflow must accept a coordinated release_tag input');
   }
-  if (workflow?.permissions?.contents !== 'write') {
-    failures.push('Android workflow must allow writing release contents');
+  if (workflow?.permissions?.contents !== 'read') {
+    failures.push('Android producer must use read-only repository permissions');
   }
 
   const job = workflow?.jobs?.build;
   const steps = job?.steps ?? [];
   if (job?.['runs-on'] !== 'ubuntu-latest') failures.push('Android build must run on ubuntu-latest');
-  if (!steps.some((step) => step.uses === 'actions/setup-node@v4' && step.with?.['node-version'] === 22)) {
-    failures.push('Android workflow must install Node 22');
+  const expectedActions = [
+    'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
+    'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
+    'actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3',
+    'android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407',
+  ];
+  for (const action of expectedActions) {
+    if (!steps.some((step) => step.uses === action)) failures.push(`Android workflow is missing pinned action: ${action}`);
   }
-  if (!steps.some((step) => (
-    step.uses === 'actions/setup-java@v4'
-    && step.with?.['java-version'] === 21
-    && step.with?.distribution === 'temurin'
-  ))) {
-    failures.push('Android workflow must install Java 21');
-  }
-  if (!steps.some((step) => step.uses === 'android-actions/setup-android@v3')) {
-    failures.push('Android workflow must install the Android SDK');
+  const node = steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
+  if (node?.with?.['node-version'] !== 22) failures.push('Android workflow must install Node 22');
+  const java = steps.find((step) => step.uses?.startsWith('actions/setup-java@'));
+  if (java?.with?.['java-version'] !== 21 || java?.with?.distribution !== 'temurin') {
+    failures.push('Android workflow must install Temurin Java 21');
   }
   for (const command of [
     'npm ci',
     'npm run typecheck',
+    'npm run test:android-release',
     androidTestRun,
     'npm run android:sync',
     'npm run android:test:native',
     'cd android && ./gradlew lintDebug',
-    'cd android && ./gradlew assembleDebug',
     releaseBuildRun,
   ]) {
     if (!hasRun(job, command)) failures.push(`Android workflow is missing: ${command}`);
   }
 
+  const tagVerification = steps.find((step) => step.name === 'Verify Android release tag');
   const secretGuard = steps.find((step) => step.name === 'Require Android release signing secrets');
+  if (
+    tagVerification?.if !== releaseCondition
+    || tagVerification.env?.RELEASE_TAG !== '${{ inputs.release_tag }}'
+    || tagVerification.run !== 'node scripts/verify-release-tag.mjs "$RELEASE_TAG"'
+    || steps.indexOf(tagVerification) >= steps.indexOf(secretGuard)
+  ) {
+    failures.push('Android must verify the exact release tag before signing');
+  }
   const secretNames = [
     'ANDROID_KEYSTORE_BASE64',
     'ANDROID_KEY_ALIAS',
@@ -291,64 +349,68 @@ export function verifyAndroidWorkflow(workflow) {
     'ANDROID_STORE_PASSWORD',
   ];
   if (
-    secretGuard?.if !== tagPushCondition
+    secretGuard?.if !== releaseCondition
     || !secretNames.every((name) => (
       secretGuard.env?.[name] === '${{ secrets.' + name + ' }}'
       && secretGuard.run?.includes(name)
     ))
   ) {
-    failures.push('Android tag builds must fail closed when signing secrets are missing');
+    failures.push('Android release builds must fail closed when signing secrets are missing');
   }
   const decode = steps.find((step) => step.name === 'Decode Android release keystore');
   if (
-    decode?.if !== tagPushCondition
-    || !decode.run?.includes('base64 --decode')
+    decode?.if !== releaseCondition
+    || !decode.run?.includes('umask 077')
+    || !decode.run?.includes('chmod 700 "$RUNNER_TEMP/android-signing"')
     || !decode.run?.includes('chmod 600')
     || decode.env?.ANDROID_KEYSTORE_BASE64 !== '${{ secrets.ANDROID_KEYSTORE_BASE64 }}'
   ) {
-    failures.push('Android tag builds must decode the secret keystore securely');
+    failures.push('Android release keystore must be decoded with private permissions');
   }
   const releaseBuild = steps.find((step) => step.run === releaseBuildRun);
   if (
-    releaseBuild?.if !== tagPushCondition
+    releaseBuild?.if !== releaseCondition
     || !secretNames.slice(1).every((name) => (
       releaseBuild.env?.[name] === '${{ secrets.' + name + ' }}'
     ))
   ) {
     failures.push('Android release build must receive signing values only from GitHub secrets');
   }
+  const staging = steps.find((step) => step.name === 'Stage named Android release assets');
+  if (
+    staging?.if !== releaseCondition
+    || !staging.run?.includes('APK_NAME="Codex-Pet-Pause-$VERSION-android-universal.apk"')
+    || !staging.run?.includes('cp android/app/build/outputs/apk/release/app-release.apk "$ARTIFACT_DIR/$APK_NAME"')
+    || /(?:android-arm64|app-arm64-v8a|bit-for-bit)/u.test(staging.run)
+  ) {
+    failures.push('Android release staging must use the universal filename and unsplit APK');
+  }
   const signingVerification = steps.find((step) => step.name === 'Verify signed Android release');
   if (
-    signingVerification?.if !== tagPushCondition
-    || !signingVerification.run?.includes('apksigner')
+    signingVerification?.if !== releaseCondition
     || !signingVerification.run?.includes('verify --verbose --print-certs')
     || !signingVerification.run?.includes('node scripts/verify-android-release.mjs')
   ) {
     failures.push('Android release must verify signing and artifact contents before upload');
   }
-  const staging = steps.find((step) => step.name === 'Stage deterministic Android release assets');
+  const debugBuild = steps.find((step) => step.name === 'Build debug APK');
+  const debugUpload = steps.find((step) => step.name === 'Upload debug APK');
+  const releaseUpload = steps.find((step) => step.name === 'Upload signed Android artifact');
+  if (debugBuild?.if !== debugCondition || debugUpload?.if !== debugCondition) {
+    failures.push('Android debug builds must remain available outside coordinated releases');
+  }
   if (
-    staging?.if !== tagPushCondition
-    || !staging.run?.includes('APK_NAME="Codex-Pet-Pause-$VERSION-android-universal.apk"')
-    || !staging.run?.includes(
-      'cp android/app/build/outputs/apk/release/app-release.apk "$ARTIFACT_DIR/$APK_NAME"',
-    )
-    || /(?:android-arm64|app-arm64-v8a)/u.test(staging.run)
+    releaseUpload?.if !== releaseCondition
+    || releaseUpload.uses !== 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
   ) {
-    failures.push('Android release staging must use the universal filename and unsplit APK');
+    failures.push('Android release must upload a pinned Actions artifact for the coordinator');
   }
-  const debugUpload = steps.find((step) => (
-    step.uses === 'actions/upload-artifact@v4' && step.name === 'Upload debug APK'
-  ));
-  const releaseUpload = steps.find((step) => (
-    step.uses === 'actions/upload-artifact@v4' && step.name === 'Upload signed Android artifact'
-  ));
-  if (!debugUpload || !releaseUpload) {
-    failures.push('Android workflow must upload an Actions artifact on every successful build');
+  const cleanup = steps.find((step) => step.name === 'Clean up Android release keystore');
+  if (cleanup?.if !== 'always()' || !cleanup.run?.includes('rm -rf "$RUNNER_TEMP/android-signing"')) {
+    failures.push('Android release keystore cleanup must always run');
   }
-  const publish = steps.find((step) => step.name === 'Publish Android release assets');
-  if (publish?.if !== tagPushCondition || publish?.run !== releaseUploadRun) {
-    failures.push('Android release publishing must upload only the two exact Android paths');
+  if (steps.some((step) => /gh release (?:create|upload|delete)/u.test(step.run ?? ''))) {
+    failures.push('Android producer must never publish GitHub Release assets directly');
   }
   return failures;
 }

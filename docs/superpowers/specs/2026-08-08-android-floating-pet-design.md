@@ -162,7 +162,7 @@ offers Show Pet, Open Settings, and Quit actions.
 ## 9. Compatibility and Distribution
 
 - Minimum supported system: Android 9 / API 28.
-- Initial artifact: signed `arm64-v8a` APK.
+- Initial artifact: signed universal pure-JVM/WebView APK with no native `.so` libraries, compatible with arm64 devices.
 - Distribution: GitHub Releases, alongside desktop artifacts.
 - Release assets include a SHA-256 digest.
 - Signing credentials are stored only as encrypted GitHub Actions secrets and
@@ -223,3 +223,5 @@ Desktop protection is a required release gate:
 8. Settings, imported pets, and history remain local and persist across relaunch.
 9. Existing macOS, Windows, Linux, and web behavior and release artifacts pass
    their complete regression gates unchanged.
+
+Android backup is disabled for app-private settings, history, reminder state, and imported pets; same-key in-place APK upgrades still preserve local data.
