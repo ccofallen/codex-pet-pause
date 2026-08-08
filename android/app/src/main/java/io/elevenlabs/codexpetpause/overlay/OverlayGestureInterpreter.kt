@@ -168,8 +168,9 @@ class OverlayGestureInterpreter(
     }
 
     private fun onWait(atMs: Long): OverlayGestureResult {
+        if (activeGesture?.isSecondTap == true) return OverlayGestureResult.NoOp
         val pending = pendingTapUpAtMs ?: return OverlayGestureResult.NoOp
-        if (atMs - pending < doubleTapWindowMs) return OverlayGestureResult.NoOp
+        if (atMs - pending <= doubleTapWindowMs) return OverlayGestureResult.NoOp
         pendingTapUpAtMs = null
         return OverlayGestureResult.SingleTap
     }

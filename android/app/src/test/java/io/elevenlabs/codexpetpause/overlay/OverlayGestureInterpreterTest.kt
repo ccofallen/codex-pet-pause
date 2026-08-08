@@ -164,6 +164,34 @@ class OverlayGestureInterpreterTest {
     }
 
     @Test
+    fun waitDoesNotSettlePendingTapWhileSecondGestureQualifies() {
+        val at249 = interpreter()
+        tapAtZero(at249)
+        assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 249)))
+        assertEquals(NoOp, at249.consume(MotionEventSample.wait(atMs = 251)))
+        assertEquals(NoOp, at249.consume(MotionEventSample.wait(atMs = 300)))
+        assertEquals(OpenMenu, at249.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301)))
+
+        val at250 = interpreter()
+        tapAtZero(at250)
+        assertEquals(NoOp, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 250)))
+        assertEquals(NoOp, at250.consume(MotionEventSample.wait(atMs = 251)))
+        assertEquals(NoOp, at250.consume(MotionEventSample.wait(atMs = 300)))
+        assertEquals(OpenMenu, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 301)))
+    }
+
+    @Test
+    fun cancellingQualifyingSecondGestureLeavesFirstTapForNextWaitToSettle() {
+        val interpreter = interpreter()
+        tapAtZero(interpreter)
+        interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 250))
+
+        assertEquals(NoOp, interpreter.consume(MotionEventSample(MotionAction.CANCEL, eventTimeMs = 250)))
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = 251)))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.wait(atMs = 300)))
+    }
+
+    @Test
     fun secondPointerCannotReplaceOrFinishTheActivePointerGesture() {
         val interpreter = interpreter()
 
@@ -238,5 +266,10 @@ class OverlayGestureInterpreterTest {
     private fun tap(interpreter: OverlayGestureInterpreter, x: Float, y: Float, atMs: Long): OverlayGestureResult {
         interpreter.consume(MotionEventSample.down(x = x, y = y, atMs = atMs))
         return interpreter.consume(MotionEventSample.up(x = x, y = y, atMs = atMs + 16))
+    }
+
+    private fun tapAtZero(interpreter: OverlayGestureInterpreter) {
+        interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 0))
+        interpreter.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 0))
     }
 }
