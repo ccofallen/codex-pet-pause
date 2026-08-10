@@ -86,15 +86,45 @@ function remainingLabel(seconds: number, t: Translator): string {
   });
 }
 
-export function Dashboard() {
+interface DashboardProps {
+  pauseWhenHidden?: boolean;
+}
+
+export function Dashboard({ pauseWhenHidden = false }: DashboardProps = {}) {
   const { locale, t } = useI18n();
   const snapshot = useAppSnapshot();
   const [displayNow, setDisplayNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const timer = window.setInterval(() => setDisplayNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (!pauseWhenHidden) {
+      const timer = window.setInterval(() => setDisplayNow(Date.now()), 1_000);
+      return () => window.clearInterval(timer);
+    }
+    let timer: number | undefined;
+    const stopTimer = (): void => {
+      if (timer === undefined) return;
+      window.clearInterval(timer);
+      timer = undefined;
+    };
+    const startTimer = (): void => {
+      if (timer !== undefined) return;
+      timer = window.setInterval(() => setDisplayNow(Date.now()), 1_000);
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden') {
+        stopTimer();
+        return;
+      }
+      setDisplayNow(Date.now());
+      startTimer();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    onVisibilityChange();
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stopTimer();
+    };
+  }, [pauseWhenHidden]);
 
   const reminderDisplayNow = getReminderDisplayNow(snapshot.scheduler, displayNow);
   const summaries = getReminderSummaries(snapshot.scheduler.reminders, reminderDisplayNow, locale);

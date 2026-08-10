@@ -26,6 +26,7 @@ function createFakeController(): AppController {
     getSnapshot: () => snapshot,
     subscribe: vi.fn(() => () => undefined),
     hydrate: vi.fn(async () => undefined),
+    applyCommittedRuntimeState: vi.fn(),
     reconcileNow: vi.fn(async () => undefined),
     complete: vi.fn(async () => undefined),
     snooze: vi.fn(async () => undefined),

@@ -10,14 +10,25 @@ import type {
 } from '../bridge/androidHost';
 import { readAndroidBlobBytes } from './androidRepositories';
 
-export type AndroidPetImportEvent = AndroidPetArchiveEvent;
+export type AndroidPetImportEvent = AndroidPetArchiveEvent & { claimId?: number };
+export type AndroidPetImportClaim = Pick<AndroidPetImportEvent, 'token' | 'claimId'>;
 
 export interface AndroidPetImport {
+  connect(listener?: (event: AndroidPetImportEvent) => void): () => void;
+  dispose(): void;
   openPetdex(): Promise<void>;
   pickFiles(): Promise<File[]>;
-  consumePendingArchive(token: string): Promise<File>;
-  completePendingArchive(token: string, outcome: AndroidPendingArchiveOutcome): Promise<void>;
-  persistValidatedPet(pet: StoredCodexPet): Promise<AndroidPetPersistResult | void>;
+  consumePendingArchive(token: string, claim?: AndroidPetImportClaim): Promise<File>;
+  completePendingArchive(
+    token: string,
+    outcome: AndroidPendingArchiveOutcome,
+    claim?: AndroidPetImportClaim,
+  ): Promise<void>;
+  persistValidatedPet(
+    pet: StoredCodexPet,
+    claim?: AndroidPetImportClaim,
+  ): Promise<AndroidPetPersistResult | void>;
+  isClaimActive?(claim: AndroidPetImportClaim): boolean;
   subscribe(listener: (event: AndroidPetImportEvent) => void): () => void;
 }
 
@@ -45,16 +56,86 @@ export function createAndroidPetImport(
   let activeToken: string | undefined;
   const queuedTokens: string[] = [];
   const knownTokens = new Set<string>();
+  let navigationListener: ((event: AndroidPetImportEvent) => void) | undefined;
+  let unsubscribeHost: (() => void) | undefined;
+  let disposed = false;
+  let persisting = false;
+  let claimSequence = 0;
+  let activeClaimId: number | undefined;
+  let persistenceClaimId: number | undefined;
+  let acknowledgement: {
+    token: string;
+    outcome: AndroidPendingArchiveOutcome;
+    claimId?: number;
+  } | undefined;
+
+  const claimMatches = (
+    claim: AndroidPetImportClaim,
+    includePersistence = false,
+  ): boolean => activeToken === claim.token && (
+    claim.claimId === undefined
+    || activeClaimId === claim.claimId
+    || (includePersistence && persistenceClaimId === claim.claimId)
+    || (includePersistence && acknowledgement?.claimId === claim.claimId)
+  );
+
+  const requireClaim = (claim: AndroidPetImportClaim, includePersistence = false): void => {
+    if (!claimMatches(claim, includePersistence)) {
+      throw new Error('stale Android pending archive claim');
+    }
+  };
 
   const deliverNext = (): void => {
-    if (listener === undefined || activeToken !== undefined) return;
-    const token = queuedTokens.shift();
-    if (token === undefined) return;
-    activeToken = token;
-    listener({ type: 'pet-archive-ready', token });
+    if (disposed || listener === undefined
+      || activeClaimId !== undefined || persistenceClaimId !== undefined
+      || acknowledgement !== undefined) return;
+    activeToken ??= queuedTokens.shift();
+    if (activeToken === undefined) return;
+    activeClaimId = ++claimSequence;
+    listener({ type: 'pet-archive-ready', token: activeToken, claimId: activeClaimId });
+  };
+
+  const connectHost = (): void => {
+    if (disposed || unsubscribeHost !== undefined) return;
+    unsubscribeHost = host.subscribePetArchives((event) => {
+      if (knownTokens.has(event.token)) return;
+      knownTokens.add(event.token);
+      queuedTokens.push(event.token);
+      navigationListener?.(event);
+      deliverNext();
+    });
   };
 
   return {
+    connect(nextNavigationListener): () => void {
+      navigationListener = nextNavigationListener;
+      connectHost();
+      return () => {
+        if (navigationListener === nextNavigationListener) navigationListener = undefined;
+        unsubscribeHost?.();
+        unsubscribeHost = undefined;
+      };
+    },
+
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      unsubscribeHost?.();
+      unsubscribeHost = undefined;
+      navigationListener = undefined;
+      listener = undefined;
+      queuedTokens.length = 0;
+      knownTokens.clear();
+      if (activeToken !== undefined
+        && persistenceClaimId === undefined
+        && acknowledgement === undefined) {
+        const token = activeToken;
+        activeToken = undefined;
+        activeClaimId = undefined;
+        void host.completePendingArchive(token, 'retry').catch(() => undefined);
+      }
+    },
+
     openPetdex: () => host.openPetdex(),
 
     async pickFiles(): Promise<File[]> {
@@ -62,18 +143,52 @@ export function createAndroidPetImport(
       return selection.status === 'cancelled' ? [] : selection.files.map(nativeFile);
     },
 
-    async consumePendingArchive(token: string): Promise<File> {
-      return nativeFile(await host.consumePendingArchive(token));
+    async consumePendingArchive(token: string, claim?: AndroidPetImportClaim): Promise<File> {
+      if (claim !== undefined) requireClaim(claim);
+      const archive = nativeFile(await host.consumePendingArchive(token));
+      if (claim !== undefined) requireClaim(claim);
+      return archive;
     },
 
-    async completePendingArchive(token, outcome): Promise<void> {
+    async completePendingArchive(token, outcome, claim): Promise<void> {
+      if (claim !== undefined) requireClaim(claim, true);
       if (activeToken !== token) throw new Error('Android pending archive is not active');
-      try {
-        await host.completePendingArchive(token, outcome);
-      } catch {
-        await host.completePendingArchive(token, outcome);
+      if (acknowledgement !== undefined) {
+        throw new Error('Android pending archive acknowledgement already in progress');
       }
+      const claimId = claim?.claimId ?? activeClaimId ?? persistenceClaimId;
+      const transaction: {
+        token: string;
+        outcome: AndroidPendingArchiveOutcome;
+        claimId?: number;
+      } = {
+        token,
+        outcome,
+        ...(claimId === undefined ? {} : { claimId }),
+      };
+      acknowledgement = transaction;
+      activeClaimId = undefined;
+      persistenceClaimId = undefined;
+      try {
+        try {
+          await host.completePendingArchive(token, outcome);
+        } catch {
+          await host.completePendingArchive(token, outcome);
+        }
+      } catch (error) {
+        if (acknowledgement === transaction) acknowledgement = undefined;
+        if (disposed) {
+          activeToken = undefined;
+          knownTokens.delete(token);
+        } else {
+          deliverNext();
+        }
+        throw error;
+      }
+      if (acknowledgement === transaction) acknowledgement = undefined;
       activeToken = undefined;
+      activeClaimId = undefined;
+      persistenceClaimId = undefined;
       if (outcome === 'retry') {
         queuedTokens.length = 0;
         knownTokens.clear();
@@ -83,37 +198,63 @@ export function createAndroidPetImport(
       deliverNext();
     },
 
-    async persistValidatedPet(pet: StoredCodexPet): Promise<AndroidPetPersistResult | void> {
-      const { spritesheet, ...metadata } = pet;
-      const bytes = new Uint8Array(await readAndroidBlobBytes(spritesheet));
-      if (bytes.byteLength === 0) throw new Error('empty Android pet spritesheet');
-      const input: AndroidPetWrite = {
-        id: pet.id,
-        metadataJson: JSON.stringify(metadata),
-        spritesheetBase64: encodeBase64(bytes),
-      };
-      const result = await host.persistValidatedPet(input);
-      if (result !== undefined) applyCommittedSnapshot?.(result.snapshot);
-      return result;
+    async persistValidatedPet(
+      pet: StoredCodexPet,
+      claim?: AndroidPetImportClaim,
+    ): Promise<AndroidPetPersistResult | void> {
+      const ownsArchive = claim !== undefined;
+      if (claim !== undefined) {
+        requireClaim(claim);
+        persisting = true;
+        persistenceClaimId = claim.claimId;
+        activeClaimId = undefined;
+      }
+      try {
+        const { spritesheet, ...metadata } = pet;
+        const bytes = new Uint8Array(await readAndroidBlobBytes(spritesheet));
+        if (bytes.byteLength === 0) throw new Error('empty Android pet spritesheet');
+        const input: AndroidPetWrite = {
+          id: pet.id,
+          metadataJson: JSON.stringify(metadata),
+          spritesheetBase64: encodeBase64(bytes),
+        };
+        const result = await host.persistValidatedPet(input);
+        if (result !== undefined) applyCommittedSnapshot?.(result.snapshot);
+        return result;
+      } catch (error) {
+        if (ownsArchive) {
+          persisting = false;
+          persistenceClaimId = undefined;
+          if (disposed && activeToken !== undefined) {
+            const token = activeToken;
+            activeToken = undefined;
+            knownTokens.delete(token);
+            await host.completePendingArchive(token, 'retry').catch(() => undefined);
+          } else {
+            deliverNext();
+          }
+        }
+        throw error;
+      } finally {
+        if (ownsArchive) persisting = false;
+      }
+    },
+
+    isClaimActive(claim): boolean {
+      return claimMatches(claim, true);
     },
 
     subscribe(nextListener): () => void {
       if (listener !== undefined) throw new Error('Android pending archive listener already installed');
+      if (disposed) throw new Error('Android pet importer disposed');
       listener = nextListener;
-      const unsubscribe = host.subscribePetArchives((event) => {
-        if (knownTokens.has(event.token)) return;
-        knownTokens.add(event.token);
-        queuedTokens.push(event.token);
-        deliverNext();
-      });
+      connectHost();
+      deliverNext();
       return () => {
-        const token = activeToken;
-        listener = undefined;
-        activeToken = undefined;
-        queuedTokens.length = 0;
-        knownTokens.clear();
-        unsubscribe();
-        if (token !== undefined) void host.completePendingArchive(token, 'retry').catch(() => undefined);
+        if (listener === nextListener) {
+          listener = undefined;
+          if (!persisting && acknowledgement === undefined) activeClaimId = undefined;
+        }
       };
     },
   };

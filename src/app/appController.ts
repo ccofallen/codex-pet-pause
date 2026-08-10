@@ -17,7 +17,7 @@ import type { HistoryRepository } from '../infrastructure/historyRepository';
 import type { SettingsRepository } from '../infrastructure/settingsRepository';
 import type { PetRepository } from '../infrastructure/petRepository';
 import { BUILTIN_PET_ID, DEFAULT_PET_POSITION } from '../features/pets/domain/types';
-import type { PetPosition, StoredCodexPet } from '../features/pets/domain/types';
+import type { ListedCodexPet, PetPosition, StoredCodexPet } from '../features/pets/domain/types';
 import {
   createReminderNotification,
   getReminderLabel,
@@ -53,7 +53,8 @@ export interface AppController {
   getSnapshot(): AppSnapshot;
   subscribe(listener: () => void): () => void;
   hydrate(): Promise<void>;
-  applyCommittedState?(state: Pick<AppSnapshot, 'settings' | 'pets'>): void;
+  applyCommittedState?(state: Pick<AppSnapshot, 'settings' | 'pets'> & { revision?: number }): void;
+  applyCommittedRuntimeState(state: { revision: number; settings: AppSettings }): void;
   reconcileNow(): Promise<void>;
   complete(id: string): Promise<void>;
   snooze(id: string, minutes: 5 | 10 | 15): Promise<void>;
@@ -396,9 +397,9 @@ function eventId(now: number): string {
   return `${now}-${fallbackEventSequence}`;
 }
 
-function isStoredCodexPet(value: unknown): value is StoredCodexPet {
+function isStoredCodexPet(value: unknown): value is ListedCodexPet {
   if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Partial<StoredCodexPet>;
+  const candidate = value as Partial<ListedCodexPet>;
   return typeof candidate.id === 'string'
     && candidate.id.length > 0
     && typeof candidate.displayName === 'string'
@@ -407,7 +408,9 @@ function isStoredCodexPet(value: unknown): value is StoredCodexPet {
     && (candidate.spriteVersion === 1 || candidate.spriteVersion === 2)
     && typeof candidate.spritesheetFilename === 'string'
     && candidate.spritesheetFilename.length > 0
-    && candidate.spritesheet instanceof Blob
+    && (candidate.assetKind === 'catalog'
+      ? (candidate.thumbnail === undefined || candidate.thumbnail instanceof Blob)
+      : ('spritesheet' in candidate && candidate.spritesheet instanceof Blob))
     && typeof candidate.importedAt === 'number'
     && Number.isFinite(candidate.importedAt)
     && typeof candidate.updatedAt === 'number'
@@ -428,9 +431,12 @@ export function createAppController(deps: ControllerDependencies): AppController
   };
   const listeners = new Set<() => void>();
   let settingsRevision = 0;
+  let petCatalogRevision = 0;
+  let committedRuntimeRevision = -1;
 
   const publish = (next: AppSnapshot): void => {
     if (next.settings !== snapshot.settings) settingsRevision += 1;
+    if (next.pets !== snapshot.pets) petCatalogRevision += 1;
     snapshot = next;
     listeners.forEach((listener) => listener());
   };
@@ -458,14 +464,15 @@ export function createAppController(deps: ControllerDependencies): AppController
   ): Promise<void> => {
     while (true) {
       const revision = settingsRevision;
+      const catalogRevision = petCatalogRevision;
       const settings = project(snapshot.settings);
       try {
         await deps.settings.save(settings);
       } catch (error) {
-        if (revision !== settingsRevision) continue;
+        if (revision !== settingsRevision || catalogRevision !== petCatalogRevision) continue;
         throw error;
       }
-      if (revision === settingsRevision) {
+      if (revision === settingsRevision && catalogRevision === petCatalogRevision) {
         commit?.(settings);
         return;
       }
@@ -513,7 +520,7 @@ export function createAppController(deps: ControllerDependencies): AppController
     publish({ ...snapshot, petLibraryError: 'write-failed' });
   };
 
-  const sortedPets = (pets: StoredCodexPet[]): StoredCodexPet[] => pets
+  const sortedPets = (pets: ListedCodexPet[]): ListedCodexPet[] => pets
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
 
   const performReminderAction = async (
@@ -570,7 +577,11 @@ export function createAppController(deps: ControllerDependencies): AppController
       return () => listeners.delete(listener);
     },
 
-    applyCommittedState({ settings, pets }): void {
+    applyCommittedState({ revision, settings, pets }): void {
+      if (revision !== undefined) {
+        if (!Number.isSafeInteger(revision) || revision < 0 || revision < committedRuntimeRevision) return;
+        committedRuntimeRevision = revision;
+      }
       const { petLibraryError: _petLibraryError, ...current } = snapshot;
       publish({
         ...current,
@@ -581,7 +592,28 @@ export function createAppController(deps: ControllerDependencies): AppController
       });
     },
 
+    applyCommittedRuntimeState({ revision, settings }): void {
+      if (!Number.isSafeInteger(revision) || revision < 0 || revision <= committedRuntimeRevision) return;
+      committedRuntimeRevision = revision;
+      lastSuppressionObservation = deps.clock.now();
+      const dueReminderIds = new Set(
+        settings.reminders
+          .filter((reminder) => reminder.enabled && reminder.status === 'due')
+          .map((reminder) => reminder.id),
+      );
+      const dueQueue = snapshot.scheduler.dueQueue
+        .filter((item) => dueReminderIds.has(item.reminderId));
+      publish({
+        ...snapshot,
+        settings,
+        scheduler: schedulerFrom(settings, dueQueue),
+        storageMode: 'persistent',
+        historyRevision: (snapshot.historyRevision ?? 0) + 1,
+      });
+    },
+
     async hydrate(): Promise<void> {
+      const petCatalogRevisionAtStart = petCatalogRevision;
       const now = deps.clock.now();
       let settings: AppSettings;
       let storageMode: AppSnapshot['storageMode'] = 'persistent';
@@ -592,8 +624,11 @@ export function createAppController(deps: ControllerDependencies): AppController
         settings = createDefaultSettings(now, defaultLocale);
         storageMode = 'temporary';
       }
+      const petsLoad: Promise<ListedCodexPet[]> = deps.pets.deferListUntilMounted === true
+        ? Promise.resolve([])
+        : deps.pets.list();
       const [petsResult, historyResult] = await Promise.allSettled([
-        deps.pets.list(),
+        petsLoad,
         deps.history.prune(now),
       ]);
       if (historyResult.status === 'rejected') {
@@ -607,28 +642,72 @@ export function createAppController(deps: ControllerDependencies): AppController
       const petLibraryError = petsResult.status === 'rejected' || hasCorruptPets
         ? 'load-failed' as const
         : undefined;
-      const selectedPetExists = settings.activePetId === BUILTIN_PET_ID
-        || pets.some(({ id }) => id === settings.activePetId);
+      const availablePets = (): ListedCodexPet[] => (
+        petCatalogRevision > petCatalogRevisionAtStart ? snapshot.pets : pets
+      );
+      const selectedPetExistsFor = (candidate: AppSettings): boolean => (
+        deps.pets.deferListUntilMounted === true
+        || candidate.activePetId === BUILTIN_PET_ID
+        || availablePets().some(({ id }) => id === candidate.activePetId)
+      );
+      const correctActivePet = (candidate: AppSettings): AppSettings => (
+        selectedPetExistsFor(candidate)
+          ? candidate
+          : { ...candidate, activePetId: BUILTIN_PET_ID }
+      );
+      const loadedSettings = settings;
+      const selectedPetExists = selectedPetExistsFor(settings);
       if (!selectedPetExists || petsResult.status === 'rejected') {
         settings = { ...settings, activePetId: BUILTIN_PET_ID };
       }
-      if (!selectedPetExists && petsResult.status === 'fulfilled') {
+      if (committedRuntimeRevision < 0
+        && !selectedPetExists
+        && petsResult.status === 'fulfilled') {
         try {
-          await deps.settings.save(settings);
+          const revisionBeforeFallbackSave = settingsRevision;
+          await writeCurrentSettings(
+            (current) => correctActivePet(
+              settingsRevision === revisionBeforeFallbackSave ? loadedSettings : current,
+            ),
+            (persisted) => { settings = persisted; },
+          );
         } catch {
           storageMode = 'temporary';
           nonBlockingError = 'settings-write-failed';
         }
       }
-      lastSuppressionObservation = now;
+      let authoritativeSettings = snapshot.settings;
+      if (committedRuntimeRevision >= 0 && !selectedPetExistsFor(authoritativeSettings)) {
+        try {
+          await writeCurrentSettings(correctActivePet, (persisted) => {
+            authoritativeSettings = persisted;
+          });
+        } catch {
+          authoritativeSettings = correctActivePet(snapshot.settings);
+          storageMode = 'temporary';
+          nonBlockingError = 'settings-write-failed';
+        }
+      }
+      const runtimeStateIsAuthoritative = committedRuntimeRevision >= 0;
+      if (!runtimeStateIsAuthoritative) lastSuppressionObservation = now;
+      const catalogAdvancedDuringHydration = petCatalogRevision > petCatalogRevisionAtStart;
+      const authoritativePets = catalogAdvancedDuringHydration ? snapshot.pets : sortedPets(pets);
+      const authoritativePetLibraryError = catalogAdvancedDuringHydration
+        ? snapshot.petLibraryError
+        : petLibraryError;
       publish({
         ready: true,
-        settings,
-        scheduler: schedulerFrom(settings),
+        settings: runtimeStateIsAuthoritative ? authoritativeSettings : settings,
+        scheduler: runtimeStateIsAuthoritative ? snapshot.scheduler : schedulerFrom(settings),
         storageMode,
         notificationStatus: deps.notifications.status(),
-        pets: sortedPets(pets),
-        ...(petLibraryError === undefined ? {} : { petLibraryError }),
+        pets: authoritativePets,
+        ...(runtimeStateIsAuthoritative && snapshot.historyRevision !== undefined
+          ? { historyRevision: snapshot.historyRevision }
+          : {}),
+        ...(authoritativePetLibraryError === undefined
+          ? {}
+          : { petLibraryError: authoritativePetLibraryError }),
         ...(nonBlockingError === undefined ? {} : { nonBlockingError }),
       });
     },
@@ -814,6 +893,15 @@ export function createAppController(deps: ControllerDependencies): AppController
         publish({ ...rest, pets });
         return;
       }
+      if (deps.pets.selectionFallbackAtomic === true) {
+        const { petLibraryError: _error, ...rest } = snapshot;
+        publish({
+          ...rest,
+          settings: { ...snapshot.settings, activePetId: BUILTIN_PET_ID },
+          pets,
+        });
+        return;
+      }
       try {
         await persistSettingsOrThrow((settings) => ({
           ...settings,
@@ -827,6 +915,7 @@ export function createAppController(deps: ControllerDependencies): AppController
           });
         });
       } catch (settingsError) {
+        if (previousRecord.assetKind === 'catalog') throw settingsError;
         try {
           await deps.pets.put(previousRecord);
         } catch {

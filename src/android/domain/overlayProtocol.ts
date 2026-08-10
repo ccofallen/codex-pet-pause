@@ -9,7 +9,7 @@ export interface AndroidPetAsset {
   id: string;
   metadataJson: string;
   assetPath: string;
-  spritesheetBase64: string;
+  spritesheetBase64?: string;
 }
 
 export interface AndroidOverlayState {
@@ -20,6 +20,7 @@ export interface AndroidOverlayState {
 
 export interface AndroidHostSnapshot {
   schemaVersion: 1;
+  runtimeRevision?: number;
   settingsJson: string | null;
   historyJson: readonly string[];
   pets: readonly AndroidPetAsset[];
@@ -178,16 +179,19 @@ function parsePetAsset(value: unknown): AndroidPetAsset {
     || typeof value.id !== 'string'
     || !SAFE_PET_ID.test(value.id)
     || typeof value.assetPath !== 'string'
-    || typeof value.spritesheetBase64 !== 'string') {
+    || (value.spritesheetBase64 !== undefined && typeof value.spritesheetBase64 !== 'string')) {
     throw new Error('invalid Android pet asset');
   }
   const assetMatch = SAFE_ASSET_PATH.exec(value.assetPath);
   if (assetMatch?.[1] !== value.id) throw new Error('invalid Android pet asset');
+  const spritesheetBase64 = value.spritesheetBase64 === undefined
+    ? undefined
+    : validateAndroidSpritesheetBase64(value.spritesheetBase64);
   return {
     id: value.id,
     metadataJson: validateAndroidPetMetadataJson(value.metadataJson, value.id),
     assetPath: value.assetPath,
-    spritesheetBase64: validateAndroidSpritesheetBase64(value.spritesheetBase64),
+    ...(spritesheetBase64 === undefined ? {} : { spritesheetBase64 }),
   };
 }
 
@@ -205,6 +209,10 @@ export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | 
   if (!Array.isArray(value.historyJson) || !Array.isArray(value.pets) || !isRecord(value.overlay)) {
     throw new Error('invalid Android state snapshot');
   }
+  if (value.runtimeRevision !== undefined
+    && (!Number.isSafeInteger(value.runtimeRevision) || (value.runtimeRevision as number) < 0)) {
+    throw new Error('invalid Android state revision');
+  }
   const historyJson = value.historyJson.map(validateAndroidActivityEventJson);
   const pets = value.pets.map(parsePetAsset);
   let activePet: AndroidPetAsset | undefined;
@@ -217,6 +225,7 @@ export function parseAndroidHostSnapshot(value: unknown): AndroidHostSnapshot | 
   }
   return {
     schemaVersion: ANDROID_STATE_SCHEMA_VERSION,
+    ...(value.runtimeRevision === undefined ? {} : { runtimeRevision: value.runtimeRevision as number }),
     settingsJson: value.settingsJson === null ? null : validateAndroidSettingsJson(value.settingsJson),
     historyJson,
     pets,

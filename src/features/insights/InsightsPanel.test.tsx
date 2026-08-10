@@ -85,6 +85,23 @@ test('reloads counts after a successful completed-history append', async () => {
   expect(screen.getByText('目视远方 1 次')).toBeVisible();
 });
 
+test('a native runtime history revision updates today total while mounted', async () => {
+  const deps = createFakeDependencies({ now: NOW });
+  const controller = createAppController(deps);
+  await controller.hydrate();
+  render(insightsView(controller, 'en'));
+  expect(await screen.findByText('0 healthy activities completed today')).toBeVisible();
+
+  deps.history.events.push(event('completed', NOW, 'lookAway'));
+  act(() => controller.applyCommittedRuntimeState({
+    revision: 1,
+    settings: controller.getSnapshot().settings,
+  }));
+
+  expect(await screen.findByText('1 healthy activity completed today')).toBeVisible();
+  expect(screen.getByText('Look into the distance: 1')).toBeVisible();
+});
+
 test('includes custom completions in the total without adding a preset category count', async () => {
   const deps = createFakeDependencies({ now: NOW });
   deps.history.events.push({

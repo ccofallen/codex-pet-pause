@@ -17,7 +17,7 @@ internal data class PendingPetArchive(val token: String, val name: String)
 internal data class PendingPetArchiveData(val name: String, val bytes: ByteArray)
 
 internal class PendingPetArchiveStore(
-    rootDirectory: File,
+    private val rootDirectory: File,
     private val maxArchiveBytes: Long = DEFAULT_MAX_ARCHIVE_BYTES,
     private val maxAggregateBytes: Long = DEFAULT_MAX_AGGREGATE_BYTES,
     private val maxPendingArchives: Int = DEFAULT_MAX_PENDING_ARCHIVES,
@@ -32,17 +32,18 @@ internal class PendingPetArchiveStore(
     },
 ) {
     private val directory = File(rootDirectory, "pending-pet-archives")
+    private val lockFile = File(rootDirectory, ".pending-pet-archives.lock")
     private val safeToken = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     private var lastPublishedAt = 0L
 
     init {
         require(maxArchiveBytes > 0 && maxAggregateBytes > 0)
         require(maxPendingArchives > 0 && archiveTtlMillis > 0)
-        synchronized(STORE_LOCK) { cleanupLocked() }
+        withStoreLock { cleanupLocked() }
     }
 
     fun accept(input: InputStream, mimeType: String, suggestedName: String): PendingPetArchive =
-        synchronized(STORE_LOCK) {
+        withStoreLock {
             requireArchiveMime(mimeType)
             if (!isSafeArchiveName(suggestedName)) throw InvalidPetArchive()
             ensureDirectory()
@@ -103,7 +104,7 @@ internal class PendingPetArchiveStore(
             }
         }
 
-    fun peek(token: String): PendingPetArchiveData = synchronized(STORE_LOCK) {
+    fun peek(token: String): PendingPetArchiveData = withStoreLock {
         requireSafeToken(token)
         cleanupLocked()
         val file = archiveFile(token)
@@ -113,11 +114,11 @@ internal class PendingPetArchiveStore(
         PendingPetArchiveData(archiveName(token), bytes)
     }
 
-    fun acknowledge(token: String) = synchronized(STORE_LOCK) {
+    fun acknowledge(token: String) = withStoreLock {
         requireSafeToken(token)
         ensureDirectory()
         cleanupLocked()
-        if (token in completedTokensLocked()) return@synchronized
+        if (token in completedTokensLocked()) return@withStoreLock
         val file = archiveFile(token)
         val tombstone = tombstoneFile(token)
         if (file.isFile && !file.renameTo(tombstone)) {
@@ -127,19 +128,19 @@ internal class PendingPetArchiveStore(
         runCatching { compactReleasedArchiveLocked(tombstone) }
     }
 
-    fun isCompleted(token: String): Boolean = synchronized(STORE_LOCK) {
+    fun isCompleted(token: String): Boolean = withStoreLock {
         requireSafeToken(token)
         token in readDurableCompletedTokensLocked()
     }
 
-    fun pendingTokens(): List<String> = synchronized(STORE_LOCK) {
+    fun pendingTokens(): List<String> = withStoreLock {
         cleanupLocked()
         pendingFilesLocked()
             .sortedWith(compareBy(File::lastModified, File::getName))
             .map { it.name.removeSuffix(".zip") }
     }
 
-    internal fun pendingFiles(): List<File> = synchronized(STORE_LOCK) {
+    internal fun pendingFiles(): List<File> = withStoreLock {
         cleanupLocked()
         pendingFilesLocked().toList()
     }
@@ -147,6 +148,20 @@ internal class PendingPetArchiveStore(
     private fun ensureDirectory() {
         if (!directory.exists() && !directory.mkdirs()) {
             throw IOException("Could not create archive handoff directory")
+        }
+    }
+
+    private inline fun <T> withStoreLock(action: () -> T): T = synchronized(STORE_LOCK) {
+        if (!rootDirectory.isDirectory && !rootDirectory.mkdirs()) {
+            throw IOException("Could not create archive handoff root")
+        }
+        FileOutputStream(lockFile, true).use { output ->
+            val fileLock = output.channel.lock()
+            try {
+                action()
+            } finally {
+                fileLock.release()
+            }
         }
     }
 

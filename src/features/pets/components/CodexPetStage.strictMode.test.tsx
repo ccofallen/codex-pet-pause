@@ -36,6 +36,7 @@ function createController(): AppController {
     getSnapshot: () => snapshot,
     subscribe: () => () => undefined,
     hydrate: vi.fn(async () => undefined),
+    applyCommittedRuntimeState: vi.fn(),
     reconcileNow: vi.fn(async () => undefined),
     complete: vi.fn(async () => undefined),
     snooze: vi.fn(async () => undefined),

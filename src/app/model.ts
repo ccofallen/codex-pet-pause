@@ -1,5 +1,5 @@
 import type { CatConfig, CatIntent } from '../features/cat/domain/types';
-import type { PetPosition, StoredCodexPet } from '../features/pets/domain/types';
+import type { ListedCodexPet, PetPosition } from '../features/pets/domain/types';
 import type { PresetReminderType, Reminder, SchedulerState } from '../features/reminders/domain/types';
 import type { Locale } from '../i18n/types';
 
@@ -54,7 +54,7 @@ export interface AppSnapshot {
   scheduler: SchedulerState;
   storageMode: 'persistent' | 'temporary';
   notificationStatus: NotificationStatus;
-  pets: StoredCodexPet[];
+  pets: ListedCodexPet[];
   petLibraryError?: 'load-failed' | 'write-failed';
   catIntent?: CatIntent | undefined;
   catIntentEventId?: string | undefined;

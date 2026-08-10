@@ -109,7 +109,7 @@ class OverlayGestureInterpreterTest {
         dragToRightEdge(interpreter, atMs = 0)
         outwardSwipe(interpreter, atMs = 1_000)
 
-        val result = tap(interpreter, x = 395f, y = 340f, atMs = 2_000)
+        val result = interpreter.consume(MotionEventSample.down(x = 395f, y = 340f, atMs = 2_000))
 
         assertEquals(Restored, result)
         assertEquals(Attachment.Edge(Side.RIGHT, retracted = false), interpreter.state)
@@ -130,18 +130,18 @@ class OverlayGestureInterpreterTest {
         val interpreter = interpreter()
 
         tap(interpreter, x = 200f, y = 340f, atMs = 0)
-        val result = interpreter.consume(MotionEventSample.wait(atMs = 267))
+        val result = interpreter.consume(MotionEventSample.wait(atMs = 417))
 
         assertEquals(SingleTap, result)
     }
 
     @Test
-    fun waitSettlesAtTheSharedTwoHundredFiftyMillisecondBoundary() {
+    fun waitSettlesAtTheSharedFourHundredMillisecondBoundary() {
         val interpreter = interpreter()
 
         tapAtZero(interpreter)
 
-        assertEquals(DOUBLE_TAP_WINDOW_MS, 250L)
+        assertEquals(DOUBLE_TAP_WINDOW_MS, 400L)
         assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = DOUBLE_TAP_WINDOW_MS)))
     }
 
@@ -150,27 +150,27 @@ class OverlayGestureInterpreterTest {
         val interpreter = interpreter()
         tap(interpreter, x = 200f, y = 340f, atMs = 0)
 
-        assertEquals(SingleTap, interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 267)))
-        assertEquals(NoOp, interpreter.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 283)))
-        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = 534)))
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 417)))
+        assertEquals(NoOp, interpreter.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 433)))
+        assertEquals(SingleTap, interpreter.consume(MotionEventSample.wait(atMs = 834)))
     }
 
     @Test
-    fun doubleTapWindowTreats249AsDoubleTapAnd250AsExpired() {
+    fun doubleTapWindowTreats399AsDoubleTapAnd400AsExpired() {
         val at249 = interpreter()
         tap(at249, x = 200f, y = 340f, atMs = 0)
-        assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 265)))
-        assertEquals(OpenMenu, at249.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 281)))
+        assertEquals(NoOp, at249.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 415)))
+        assertEquals(OpenMenu, at249.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 431)))
 
         val at250 = interpreter()
         tap(at250, x = 200f, y = 340f, atMs = 0)
-        assertEquals(SingleTap, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 266)))
-        assertEquals(NoOp, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 282)))
+        assertEquals(SingleTap, at250.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 416)))
+        assertEquals(NoOp, at250.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 432)))
 
         val at251 = interpreter()
         tap(at251, x = 200f, y = 340f, atMs = 0)
-        assertEquals(SingleTap, at251.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 267)))
-        assertEquals(NoOp, at251.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 283)))
+        assertEquals(SingleTap, at251.consume(MotionEventSample.down(x = 200f, y = 340f, atMs = 417)))
+        assertEquals(NoOp, at251.consume(MotionEventSample.up(x = 200f, y = 340f, atMs = 433)))
     }
 
     @Test
@@ -286,7 +286,7 @@ class OverlayGestureInterpreterTest {
         geometry = geometry,
         initialPlacement = OverlayPlacement(200, 300, 72, Attachment.Free),
         touchSlopDp = 8,
-        doubleTapWindowMs = 250,
+        doubleTapWindowMs = DOUBLE_TAP_WINDOW_MS,
     )
 
     private fun dragToRightEdge(interpreter: OverlayGestureInterpreter, atMs: Long) {

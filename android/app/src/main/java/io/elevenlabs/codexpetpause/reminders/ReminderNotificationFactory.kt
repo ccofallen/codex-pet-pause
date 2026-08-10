@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import io.elevenlabs.codexpetpause.MainActivity
@@ -18,7 +17,7 @@ import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import org.json.JSONObject
 
 internal enum class ReminderPet { BUILT_IN_CAT, IMPORTED_CODEX }
-internal enum class ReminderSound { CAT, SYSTEM, SILENT }
+internal enum class ReminderSound { SYSTEM, SILENT }
 
 internal class ReminderNotificationFactory(
     private val context: Context,
@@ -27,12 +26,10 @@ internal class ReminderNotificationFactory(
 
     fun soundFor(pet: ReminderPet, soundEnabled: Boolean = true): ReminderSound = when {
         !soundEnabled -> ReminderSound.SILENT
-        pet == ReminderPet.BUILT_IN_CAT -> ReminderSound.CAT
         else -> ReminderSound.SYSTEM
     }
 
     fun channelIdFor(pet: ReminderPet, soundEnabled: Boolean = true): String = when (soundFor(pet, soundEnabled)) {
-        ReminderSound.CAT -> CAT_CHANNEL_ID
         ReminderSound.SYSTEM -> SYSTEM_CHANNEL_ID
         ReminderSound.SILENT -> SILENT_CHANNEL_ID
     }
@@ -44,13 +41,6 @@ internal class ReminderNotificationFactory(
             .setUsage(AudioAttributes.USAGE_NOTIFICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
-        val catSound = Uri.parse("android.resource://${context.packageName}/${R.raw.cat_meow}")
-        manager.createNotificationChannel(
-            NotificationChannel(CAT_CHANNEL_ID, "Cat reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Break reminders with the built-in cat meow"
-                setSound(catSound, audio)
-            },
-        )
         manager.createNotificationChannel(
             NotificationChannel(SYSTEM_CHANNEL_ID, "Pet reminders", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Break reminders with the system notification sound"
@@ -83,7 +73,7 @@ internal class ReminderNotificationFactory(
             ReminderPet.IMPORTED_CODEX
         }
         return Notification.Builder(context, channelIdFor(pet, settings.optBoolean("soundEnabled", true)))
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (locale == "zh-CN") "休息提醒" else "Break reminder")
             .setContentText(reminderCopy(reminder, locale))
             .setContentIntent(PendingIntent.getActivity(
@@ -134,8 +124,7 @@ internal class ReminderNotificationFactory(
     }
 
     companion object {
-        private const val CAT_CHANNEL_ID = "reminders-cat-v1"
-        private const val SYSTEM_CHANNEL_ID = "reminders-system-v1"
+        private const val SYSTEM_CHANNEL_ID = "reminders-system-v2"
         private const val SILENT_CHANNEL_ID = "reminders-silent-v1"
         private const val REMINDER_NOTIFICATION_ID = 5106
         private const val OPEN_REQUEST = 6101

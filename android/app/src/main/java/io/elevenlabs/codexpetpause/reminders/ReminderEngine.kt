@@ -45,7 +45,7 @@ private data class QueuedReminder(
     val dueAt: Long,
 )
 
-internal class ReminderEngine(
+internal open class ReminderEngine(
     private val coordinator: AndroidStateCoordinator,
     private val clock: ReminderClock,
     private val eventIds: ReminderEventIdSource,
@@ -92,7 +92,7 @@ internal class ReminderEngine(
         scheduleNextInterval(reminder, now)
     }
 
-    fun pendingQueue(): List<String> = load()?.settings?.let(::queueFor).orEmpty().map(QueuedReminder::id)
+    open fun pendingQueue(): List<String> = load()?.settings?.let(::queueFor).orEmpty().map(QueuedReminder::id)
 
     fun delayUntilNext(): Long? {
         val settings = load()?.settings ?: return null

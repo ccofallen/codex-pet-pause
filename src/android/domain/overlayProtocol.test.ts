@@ -25,6 +25,27 @@ function snapshotFixture(overrides: Record<string, unknown> = {}): Record<string
 }
 
 describe('parseAndroidHostSnapshot', () => {
+  test('preserves the monotonic native runtime revision on committed snapshots', () => {
+    expect(parseAndroidHostSnapshot(snapshotFixture({ runtimeRevision: 17 }))?.runtimeRevision).toBe(17);
+  });
+
+  test('keeps a lightweight active pet whose binary is served by the Android asset loader', () => {
+    const value = parseAndroidHostSnapshot(snapshotFixture({
+      overlay: {
+        xRatio: 0.25,
+        yRatio: 0.75,
+        activePet: {
+          id: 'momo',
+          metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}',
+          assetPath: `pets/momo/${REVISION}/spritesheet.webp`,
+        },
+      },
+    }));
+
+    expect(value?.overlay.activePet?.id).toBe('momo');
+    expect(value?.overlay.activePet?.assetPath).toContain('spritesheet.webp');
+  });
+
   test('rejects a native snapshot with an unsupported schema', () => {
     expect(() => parseAndroidHostSnapshot({ schemaVersion: 2 })).toThrow('unsupported Android state schema');
   });

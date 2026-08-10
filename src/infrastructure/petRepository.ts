@@ -1,11 +1,17 @@
 import { decodeBrowserImage } from '../features/pets/domain/importPet';
-import type { PetFrameMetadata, StoredCodexPet } from '../features/pets/domain/types';
+import type { ListedCodexPet, PetFrameMetadata, StoredCodexPet } from '../features/pets/domain/types';
 
 export interface PetRepository {
-  list(): Promise<StoredCodexPet[]>;
+  selectionFallbackAtomic?: boolean;
+  deferListUntilMounted?: boolean;
+  list(): Promise<ListedCodexPet[]>;
   put(value: StoredCodexPet): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
+}
+
+export interface StoredPetRepository extends PetRepository {
+  list(): Promise<StoredCodexPet[]>;
 }
 
 export const PET_DB = 'codex-pet-pause-pets';
@@ -22,7 +28,7 @@ export type CreatePetRepository = (
   databaseName?: string,
   analyze?: PetFrameAnalyzer,
   revision?: PetRevisioner,
-) => PetRepository;
+) => StoredPetRepository;
 
 const analyzePetFrames: PetFrameAnalyzer = async (file) =>
   (await decodeBrowserImage(file)).frameMetadata;

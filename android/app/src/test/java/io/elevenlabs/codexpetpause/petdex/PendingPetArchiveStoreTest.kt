@@ -2,6 +2,7 @@ package io.elevenlabs.codexpetpause.petdex
 
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -152,6 +153,44 @@ class PendingPetArchiveStoreTest {
     }
 
     @Test
+    fun resumedProcessCleanupCannotDeleteAnotherProcessesActiveArchivePublication() {
+        val ready = File(temporary.root, "writer-ready")
+        val release = File(temporary.root, "release-writer")
+        val writer = ProcessBuilder(
+            File(System.getProperty("java.home"), "bin/java").absolutePath,
+            "-cp",
+            System.getProperty("java.class.path"),
+            PendingPetArchiveStorePublicationProbe::class.java.name,
+            temporary.root.absolutePath,
+            ready.absolutePath,
+            release.absolutePath,
+        ).redirectErrorStream(true).start()
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            waitForFile(ready)
+            val readerFinished = CountDownLatch(1)
+            val resumedStore = executor.submit<PendingPetArchiveStore> {
+                PendingPetArchiveStore(temporary.root).also { readerFinished.countDown() }
+            }
+
+            assertFalse(
+                "main-process cleanup must wait while another process publishes its temporary archive",
+                readerFinished.await(200, TimeUnit.MILLISECONDS),
+            )
+
+            release.writeText("publish")
+            assertTrue(writer.waitFor(5, TimeUnit.SECONDS))
+            assertEquals(writer.inputStream.bufferedReader().readText(), 0, writer.exitValue())
+            assertEquals(1, resumedStore.get(5, TimeUnit.SECONDS).pendingTokens().size)
+        } finally {
+            release.writeText("publish")
+            writer.waitFor(5, TimeUnit.SECONDS)
+            writer.destroyForcibly()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun pendingQueueClaimsAndFinishesArchivesOneAtATimeInFifoOrder() {
         val store = PendingPetArchiveStore(temporary.root, maxArchiveBytes = 32)
         val first = store.accept(ByteArrayInputStream(validZip(8)), "application/zip", "one.zip")
@@ -159,6 +198,7 @@ class PendingPetArchiveStoreTest {
         val queue = PendingPetImportQueue(store)
 
         assertEquals(first.token, queue.nextAnnouncement())
+        assertEquals(first.token, queue.currentAnnouncement())
         assertNull(queue.nextAnnouncement())
         assertArrayEquals(validZip(8), queue.claim(first.token).bytes)
         assertFalse(store.pendingFiles().isEmpty())
@@ -226,5 +266,50 @@ class PendingPetArchiveStoreTest {
         it[1] = 'K'.code.toByte()
         it[2] = 3
         it[3] = 4
+    }
+
+    private fun waitForFile(file: File) {
+        repeat(100) {
+            if (file.isFile) return
+            Thread.sleep(10)
+        }
+        throw AssertionError("Writer did not create ${file.name}")
+    }
+}
+
+object PendingPetArchiveStorePublicationProbe {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        PendingPetArchiveStore(File(args[0]), maxArchiveBytes = 32).accept(
+            PublicationBlockingZipInputStream(File(args[1]), File(args[2])),
+            "application/zip",
+            "process-boundary.zip",
+        )
+    }
+}
+
+private class PublicationBlockingZipInputStream(
+    private val ready: File,
+    private val release: File,
+) : InputStream() {
+    private val bytes = byteArrayOf('P'.code.toByte(), 'K'.code.toByte(), 3, 4, 0, 0, 0, 0)
+    private var offset = 0
+    private var signalled = false
+
+    override fun read(): Int = ByteArray(1).let { buffer ->
+        if (read(buffer) < 0) -1 else buffer[0].toInt() and 0xff
+    }
+
+    override fun read(buffer: ByteArray, off: Int, len: Int): Int {
+        if (!signalled) {
+            ready.writeText("temporary archive is open")
+            signalled = true
+            while (!release.isFile) Thread.sleep(10)
+        }
+        if (offset == bytes.size) return -1
+        val count = minOf(len, bytes.size - offset)
+        bytes.copyInto(buffer, off, offset, offset + count)
+        offset += count
+        return count
     }
 }

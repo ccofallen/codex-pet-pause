@@ -14,8 +14,13 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
   const [failed, setFailed] = useState(false);
   const startPending = useRef(false);
   const autoStartAllowed = useRef(true);
+  const overlaySettingsPending = useRef(false);
 
   const apply = useCallback((next: AndroidCapabilities) => {
+    if (overlaySettingsPending.current) {
+      overlaySettingsPending.current = false;
+      setSetupOpen(false);
+    }
     setCapabilities(next);
     setFailed(false);
   }, []);
@@ -71,6 +76,8 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
   const notificationCanRetry = capabilities.notificationPermission === 'deniedCanAsk';
   const notificationBlocked = capabilities.notificationPermission === 'blocked';
   const notificationNeedsAction = notificationCanRetry || notificationBlocked;
+  const controlsOnly = capabilities.overlayPermission === 'granted'
+    && (capabilities.notificationPermission === 'granted' || capabilities.notificationPermission === 'notRequired');
 
   const notificationAction = notificationBlocked ? (
     <button type="button" disabled={busy} onClick={() => void run(host.openNotificationSettings)}>
@@ -84,8 +91,32 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
     </button>
   );
 
+  const serviceActions = (
+    <div className="android-onboarding-actions android-service-actions">
+      {capabilities.petVisible ? (
+        <button type="button" disabled={busy} onClick={() => void run(host.hidePet)}>
+          {t('android.onboarding.hidePet')}
+        </button>
+      ) : (
+        <button type="button" disabled={busy} onClick={() => void run(host.showPet)}>
+          {t('android.onboarding.showPet')}
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          autoStartAllowed.current = false;
+          void run(host.quit);
+        }}
+      >
+        {t('android.onboarding.quit')}
+      </button>
+    </div>
+  );
+
   return (
-    <div className="android-onboarding">
+    <div className={controlsOnly ? 'android-onboarding android-onboarding--ready' : 'android-onboarding'}>
       {capabilities.overlayPermission === 'denied' ? (
         <>
           <p>{t('android.onboarding.permissionDeniedUsable')}</p>
@@ -114,7 +145,10 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
               )}
               <div className="android-onboarding-actions">
                 {notificationNeedsAction && notificationAction}
-                <button type="button" disabled={busy} onClick={() => void run(host.openOverlaySettings)}>
+                <button type="button" disabled={busy} onClick={() => {
+                  overlaySettingsPending.current = true;
+                  void run(host.openOverlaySettings);
+                }}>
                   {t('android.onboarding.openOverlaySettings')}
                 </button>
               </div>
@@ -127,7 +161,7 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
           <p>{t('android.onboarding.notificationBody')}</p>
           {notificationAction}
         </div>
-      ) : (
+      ) : controlsOnly ? serviceActions : (
         <>
           <p aria-live="polite">
             {capabilities.petVisible
@@ -145,30 +179,10 @@ export function AndroidOnboarding({ host }: AndroidOnboardingProps) {
               {notificationAction}
             </div>
           )}
-          <div className="android-onboarding-actions android-service-actions">
-            {capabilities.petVisible ? (
-              <button type="button" disabled={busy} onClick={() => void run(host.hidePet)}>
-                {t('android.onboarding.hidePet')}
-              </button>
-            ) : (
-              <button type="button" disabled={busy} onClick={() => void run(host.showPet)}>
-                {t('android.onboarding.showPet')}
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                autoStartAllowed.current = false;
-                void run(host.quit);
-              }}
-            >
-              {t('android.onboarding.quit')}
-            </button>
-          </div>
+          {serviceActions}
         </>
       )}
-      <p className="android-background-note">{t('android.onboarding.background')}</p>
+      {!controlsOnly && <p className="android-background-note">{t('android.onboarding.background')}</p>}
       {failed && <p role="alert">{t('android.onboarding.error')}</p>}
     </div>
   );

@@ -4,7 +4,9 @@ internal data class AndroidCommittedMutationResult(
     val snapshot: String?,
     val eventWarning: Throwable?,
     val refreshWarning: Throwable?,
-)
+) {
+    fun bridgeSnapshot(includeSnapshot: Boolean): String? = snapshot.takeIf { includeSnapshot }
+}
 
 internal object AndroidCommittedMutationEffects {
     fun run(

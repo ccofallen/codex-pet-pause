@@ -28,6 +28,13 @@ internal class PendingPetImportQueue(private val store: PendingPetArchiveStore) 
     }
 
     @Synchronized
+    fun currentAnnouncement(): String? = when {
+        claimedToken != null -> null
+        announcedToken != null -> announcedToken
+        else -> nextAnnouncement()
+    }
+
+    @Synchronized
     fun claim(token: String): PendingPetArchiveData {
         require(claimedToken == null) { "Another pending archive is already claimed" }
         val first = store.pendingTokens().firstOrNull() ?: throw PendingArchiveMissing()

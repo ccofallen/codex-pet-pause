@@ -1,20 +1,32 @@
 package io.elevenlabs.codexpetpause.bridge
 
+import io.elevenlabs.codexpetpause.pets.AndroidPetCatalog
 import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** Single serialized boundary for every state mutation exposed by the Capacitor plugin. */
-internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
+internal class AndroidStateCoordinator(
+    private val store: AndroidStateStore,
+    private val petCatalog: AndroidPetCatalog = AndroidPetCatalog(store.filesDir),
+) {
     @Synchronized
     fun loadSnapshot(): String? = store.readSnapshot()?.also(AndroidStateValidator::validateSnapshot)
+
+    @Synchronized
+    fun loadRuntimeSnapshot(): String? = store.readRuntimeSnapshot()
+
+    @Synchronized
+    fun loadPetCatalog(): String? = store.readPetCatalog(petCatalog)
 
     @Synchronized
     fun saveSettings(settingsJson: String): String {
         AndroidStateValidator.validateSettings(settingsJson)
         val next = snapshot()
         val merged = preserveCommittedReminderRuntime(next, settingsJson)
-        return persist(next.put("settingsJson", merged))
+        next.put("settingsJson", merged)
+        synchronizeActivePet(next, JSONObject(merged).getString("activePetId"))
+        return persist(next)
     }
 
     @Synchronized
@@ -53,6 +65,22 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     fun replaceHistory(historyJson: List<String>): String {
         historyJson.forEach(AndroidStateValidator::validateActivityEvent)
         return persist(snapshot().put("historyJson", JSONArray(historyJson)))
+    }
+
+    @Synchronized
+    fun pruneHistory(before: Double): String? {
+        require(before.isFinite()) { "Invalid history cutoff" }
+        val currentJson = store.readSnapshot() ?: return null
+        val current = JSONObject(currentJson)
+        val history = current.getJSONArray("historyJson")
+        val retained = JSONArray()
+        for (index in 0 until history.length()) {
+            val eventJson = history.getString(index)
+            AndroidStateValidator.validateActivityEvent(eventJson)
+            if (JSONObject(eventJson).getDouble("occurredAt") >= before) retained.put(eventJson)
+        }
+        return if (retained.length() == history.length()) currentJson else
+            persist(current.put("historyJson", retained))
     }
 
     @Synchronized
@@ -126,6 +154,12 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         next.put("pets", updated)
         val overlay = next.getJSONObject("overlay")
         if (overlay.optJSONObject("activePet")?.optString("id") == id) overlay.remove("activePet")
+        if (!next.isNull("settingsJson")) {
+            val settings = JSONObject(next.getString("settingsJson"))
+            if (settings.getString("activePetId") == id) {
+                next.put("settingsJson", settings.put("activePetId", "builtin-cat").toString())
+            }
+        }
         val value = persist(next)
         removedPaths.forEach { runCatching { store.deleteAsset(it) } }
         return value
@@ -137,6 +171,10 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
         val value = if (current == null) null else {
             val next = JSONObject(current).put("pets", JSONArray())
             next.getJSONObject("overlay").remove("activePet")
+            if (!next.isNull("settingsJson")) {
+                val settings = JSONObject(next.getString("settingsJson")).put("activePetId", "builtin-cat")
+                next.put("settingsJson", settings.toString())
+            }
             persist(next)
         }
         store.deleteAllPetDirectories()
@@ -147,19 +185,26 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     fun selectPet(id: String): String {
         AndroidStateValidator.requireSafePetId(id)
         val next = snapshot()
-        val pets = next.getJSONArray("pets")
-        var selected: JSONObject? = null
-        for (index in 0 until pets.length()) {
-            val pet = pets.getJSONObject(index)
-            if (pet.getString("id") == id) selected = pet
-        }
-        requireNotNull(selected) { "Pet not found" }
-        next.getJSONObject("overlay").put("activePet", selected)
+        synchronizeActivePet(next, id)
         if (!next.isNull("settingsJson")) {
             val settings = JSONObject(next.getString("settingsJson")).put("activePetId", id)
             next.put("settingsJson", settings.toString())
         }
         return persist(next)
+    }
+
+    private fun synchronizeActivePet(snapshot: JSONObject, id: String) {
+        val overlay = snapshot.getJSONObject("overlay")
+        if (id == "builtin-cat") {
+            overlay.remove("activePet")
+            return
+        }
+        val pets = snapshot.getJSONArray("pets")
+        val selected = (0 until pets.length())
+            .map(pets::getJSONObject)
+            .firstOrNull { it.getString("id") == id }
+        requireNotNull(selected) { "Pet not found" }
+        overlay.put("activePet", selected)
     }
 
     @Synchronized
@@ -177,7 +222,15 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
     }
 
     private fun snapshot(): JSONObject = store.readSnapshot()?.let(::JSONObject) ?: defaultSnapshot()
-    private fun persist(snapshot: JSONObject): String = snapshot.toString().also(store::writeSnapshot)
+    private fun persist(snapshot: JSONObject): String {
+        val previousRevision = snapshot.optLong("runtimeRevision", 0L)
+        require(previousRevision < Long.MAX_VALUE) { "Android runtime revision exhausted" }
+        val committedRevision = previousRevision + 1L
+        val value = snapshot.put("runtimeRevision", committedRevision).toString()
+        store.writeSnapshot(value)
+        AndroidCommittedStateBus.publish(committedRevision)
+        return value
+    }
 
     private fun preserveCommittedReminderRuntime(snapshot: JSONObject, incomingJson: String): String {
         if (snapshot.isNull("settingsJson")) return incomingJson
@@ -242,6 +295,7 @@ internal class AndroidStateCoordinator(private val store: AndroidStateStore) {
 
     private fun defaultSnapshot() = JSONObject()
         .put("schemaVersion", 1)
+        .put("runtimeRevision", 0L)
         .put("settingsJson", JSONObject.NULL)
         .put("historyJson", JSONArray())
         .put("pets", JSONArray())

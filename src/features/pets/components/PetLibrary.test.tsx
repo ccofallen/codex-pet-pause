@@ -25,6 +25,7 @@ const manifestFile = new File([JSON.stringify({
 const atlasFile = new File(['atlas'], 'spritesheet.webp', { type: 'image/webp' });
 const zipFile = new File(['zip'], 'murk.zip', { type: 'application/zip' });
 const GLOBAL_CSS = readFileSync('src/styles/global.css', 'utf8');
+const ANDROID_CSS = readFileSync('src/styles/android.css', 'utf8');
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -83,6 +84,8 @@ async function renderLibrary(options: {
 
 function fakeAndroidImport(overrides: Partial<AndroidPetImport> = {}): AndroidPetImport {
   return {
+    connect: () => () => undefined,
+    dispose: () => undefined,
     openPetdex: async () => undefined,
     pickFiles: async () => [],
     consumePendingArchive: async () => zipFile,
@@ -95,6 +98,7 @@ function fakeAndroidImport(overrides: Partial<AndroidPetImport> = {}): AndroidPe
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   delete window.petShell;
 });
 
@@ -701,6 +705,63 @@ test('keeps import help on a full next row at normal and narrow widths', () => {
   expect(disclosureRule).toMatch(/display:\s*block/);
   expect(disclosureRule).toMatch(/width:\s*100%/);
   expect(hiddenDisclosureRule).toMatch(/display:\s*none/);
+});
+
+test('renders a computed 24px help circle inside a 48px Android touch target', async () => {
+  const style = document.createElement('style');
+  style.textContent = `${ANDROID_CSS}
+    [data-app-host='android'] .pet-library button { min-width: 48px; min-height: 48px; }`;
+  document.head.append(style);
+
+  try {
+    const view = await renderLibrary({ locale: 'en', androidImport: fakeAndroidImport() });
+    view.container.setAttribute('data-app-host', 'android');
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const help = screen.getByRole('button', { name: 'More information about Codex pet files' });
+    const glyph = help.querySelector('span')!;
+    const targetStyle = getComputedStyle(help);
+    const glyphStyle = getComputedStyle(glyph);
+
+    expect(targetStyle.width).toBe('48px');
+    expect(targetStyle.height).toBe('48px');
+    expect(targetStyle.minWidth).toBe('48px');
+    expect(targetStyle.minHeight).toBe('48px');
+    expect(glyphStyle.width).toBe('24px');
+    expect(glyphStyle.height).toBe('24px');
+    expect(glyphStyle.minWidth).toBe('24px');
+    expect(glyphStyle.minHeight).toBe('24px');
+    expect(glyphStyle.maxWidth).toBe('24px');
+    expect(glyphStyle.maxHeight).toBe('24px');
+    expect(glyphStyle.aspectRatio).toMatch(/^1(?:\s*\/\s*1)?$/);
+    expect(glyphStyle.borderRadius).toBe('50%');
+  } finally {
+    style.remove();
+  }
+});
+
+test.each([
+  ['en', 'Add a pet', 'Choose Petdex or import a Codex pet file.',
+    'Downloading a ZIP in the app opens the secure preview automatically.',
+    'The built-in companion cat. You can switch back at any time.'],
+  ['zh-CN', '添加宠物', '从 Petdex 选择，或导入 Codex 宠物文件。',
+    '在应用内下载 ZIP 后，会自动打开安全预览。',
+    '内置陪伴猫，随时可以切换回来。'],
+] as const)('uses concise import and card copy only for the narrow Android %s surface', async (
+  locale,
+  heading,
+  instructions,
+  longHint,
+  longDescription,
+) => {
+  vi.stubGlobal('innerWidth', 320);
+  await renderLibrary({ locale, androidImport: fakeAndroidImport() });
+
+  expect(screen.getByRole('heading', { name: heading })).toBeVisible();
+  expect(screen.getByText(instructions)).toBeVisible();
+  expect(screen.queryByText(longHint))
+    .not.toBeInTheDocument();
+  expect(screen.queryByText(longDescription))
+    .not.toBeInTheDocument();
 });
 
 test('localizes import help and keeps it after the device-save sentence', async () => {
