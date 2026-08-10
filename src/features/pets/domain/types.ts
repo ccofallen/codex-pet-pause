@@ -26,18 +26,29 @@ export interface CodexPetManifest {
   spritesheetPath: string;
 }
 
-export interface StoredCodexPet {
+export interface CodexPetMetadata {
   id: string;
   displayName: string;
   description?: string;
   spriteVersion: SpriteVersion;
   spritesheetFilename: string;
-  spritesheet: Blob;
   importedAt: number;
   updatedAt: number;
   atlasRevision?: string;
   frameMetadata?: PetFrameMetadata;
 }
+
+export interface StoredCodexPet extends CodexPetMetadata {
+  assetKind?: 'full';
+  spritesheet: Blob;
+}
+
+export interface CatalogCodexPet extends CodexPetMetadata {
+  assetKind: 'catalog';
+  thumbnail?: Blob;
+}
+
+export type ListedCodexPet = StoredCodexPet | CatalogCodexPet;
 
 export type ActivePet =
   | { source: 'builtin'; id: typeof BUILTIN_PET_ID; displayName: string }

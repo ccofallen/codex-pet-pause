@@ -8,6 +8,10 @@ import {
   validateAndroidSpritesheetBase64,
   type AndroidHostSnapshot,
 } from '../domain/overlayProtocol';
+import {
+  parseAndroidRuntimeSnapshot,
+  type AndroidRuntimeState,
+} from '../domain/runtimeSnapshot';
 
 export type { AndroidHostSnapshot, AndroidPetAsset, AndroidOverlayState } from '../domain/overlayProtocol';
 
@@ -15,6 +19,19 @@ export interface AndroidPetWrite {
   id: string;
   metadataJson: string;
   spritesheetBase64: string;
+}
+
+export interface AndroidPetCatalogEntry {
+  id: string;
+  metadataJson: string;
+  assetRevision: string;
+  thumbnailBase64: string | null;
+}
+
+export interface AndroidPetCatalogSnapshot {
+  revision: number;
+  activePetId: string;
+  pets: AndroidPetCatalogEntry[];
 }
 
 export type AndroidNativePetMime = 'application/zip' | 'application/json' | 'image/webp';
@@ -36,10 +53,9 @@ export interface AndroidPetArchiveEvent {
 
 export type AndroidPendingArchiveOutcome = 'imported' | 'cancelled' | 'rejected' | 'retry';
 
-export interface AndroidHostEvent {
-  type: 'stateChanged';
-  snapshot: AndroidHostSnapshot;
-}
+export type AndroidHostEvent =
+  | { type: 'stateChanged' }
+  | { type: 'runtimeStateChanged'; revision: number };
 
 export type AndroidOverlayPermission = 'granted' | 'denied';
 export type AndroidNotificationPermission =
@@ -64,8 +80,11 @@ export interface AndroidCapabilitiesEvent {
 
 export interface AndroidHost {
   loadSnapshot(): Promise<AndroidHostSnapshot | null>;
+  loadRuntimeSnapshot(): Promise<AndroidRuntimeState | null>;
+  loadPetCatalog?(): Promise<AndroidPetCatalogSnapshot | null>;
   clearSettings(): Promise<void>;
   replaceHistory(historyJson: readonly string[]): Promise<void>;
+  pruneHistory(before: number): Promise<void>;
   clearHistory(): Promise<void>;
   clearPets(): Promise<void>;
   saveSettings(settingsJson: string): Promise<void>;
@@ -103,13 +122,17 @@ export interface AndroidControlHost extends AndroidHost, AndroidPetImportHost {
 }
 
 export interface AndroidTypedControlHost extends AndroidControlHost {
+  loadPetCatalog(): Promise<AndroidPetCatalogSnapshot | null>;
   persistValidatedPet(input: AndroidPetWrite): Promise<AndroidPetPersistResult>;
 }
 
 export interface AndroidHostPlugin {
   loadSnapshot(): Promise<unknown>;
+  loadRuntimeSnapshot?(): Promise<unknown>;
+  loadPetCatalog?(): Promise<unknown>;
   clearSettings(): Promise<void>;
   replaceHistory(options: { historyJson: string[] }): Promise<void>;
+  pruneHistory?(options: { before: number }): Promise<void>;
   clearHistory(): Promise<void>;
   clearPets(): Promise<void>;
   saveSettings(options: { json: string }): Promise<void>;
@@ -128,6 +151,7 @@ export interface AndroidHostPlugin {
   openPetdex?(): Promise<void>;
   pickPetFiles?(): Promise<unknown>;
   consumePendingArchive?(options: { token: string }): Promise<unknown>;
+  refreshPendingArchive?(): Promise<void>;
   completePendingArchive?(options: {
     token: string;
     outcome: AndroidPendingArchiveOutcome;
@@ -137,6 +161,58 @@ export interface AndroidHostPlugin {
     eventName: 'stateChanged' | 'capabilitiesChanged' | 'petArchiveReady',
     listener: (event: unknown) => void,
   ): Promise<{ remove: () => Promise<void> }>;
+}
+
+const SAFE_ANDROID_ASSET_REVISION = /^[a-f0-9]{32}$/;
+const MAX_ANDROID_THUMBNAIL_BYTES = 256 * 1024;
+
+function parseAndroidPetCatalog(value: unknown): AndroidPetCatalogSnapshot | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid Android pet catalog');
+  const catalog = value as Record<string, unknown>;
+  if (Object.keys(catalog).some((key) => !['revision', 'activePetId', 'pets'].includes(key))
+    || !Number.isSafeInteger(catalog.revision) || (catalog.revision as number) < 0
+    || typeof catalog.activePetId !== 'string' || !isSafeAndroidPetId(catalog.activePetId)
+    || !Array.isArray(catalog.pets)) throw new Error('invalid Android pet catalog');
+
+  const ids = new Set<string>();
+  const pets = catalog.pets.map((value): AndroidPetCatalogEntry => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error('invalid Android pet catalog');
+    }
+    const pet = value as Record<string, unknown>;
+    if (Object.keys(pet).some((key) => !['id', 'metadataJson', 'assetRevision', 'thumbnailBase64'].includes(key))
+      || typeof pet.id !== 'string' || !isSafeAndroidPetId(pet.id) || ids.has(pet.id)
+      || typeof pet.metadataJson !== 'string'
+      || typeof pet.assetRevision !== 'string' || !SAFE_ANDROID_ASSET_REVISION.test(pet.assetRevision)
+      || pet.thumbnailBase64 !== null && typeof pet.thumbnailBase64 !== 'string') {
+      throw new Error('invalid Android pet catalog');
+    }
+    try {
+      validateAndroidPetMetadataJson(pet.metadataJson, pet.id);
+      if (typeof pet.thumbnailBase64 === 'string') {
+        if (pet.thumbnailBase64.length > Math.ceil(MAX_ANDROID_THUMBNAIL_BYTES / 3) * 4) {
+          throw new Error('oversized thumbnail');
+        }
+        const decoded = atob(pet.thumbnailBase64);
+        if (decoded.length === 0 || decoded.length > MAX_ANDROID_THUMBNAIL_BYTES
+          || btoa(decoded) !== pet.thumbnailBase64) throw new Error('invalid thumbnail');
+      }
+    } catch {
+      throw new Error('invalid Android pet catalog');
+    }
+    ids.add(pet.id);
+    return {
+      id: pet.id,
+      metadataJson: pet.metadataJson,
+      assetRevision: pet.assetRevision,
+      thumbnailBase64: pet.thumbnailBase64 as string | null,
+    };
+  });
+  if (catalog.activePetId !== 'builtin-cat' && !ids.has(catalog.activePetId)) {
+    throw new Error('invalid Android pet catalog');
+  }
+  return { revision: catalog.revision as number, activePetId: catalog.activePetId, pets };
 }
 
 const SAFE_ARCHIVE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -213,13 +289,37 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidTypedContro
 
   return {
     async loadSnapshot(): Promise<AndroidHostSnapshot | null> {
-      return parseAndroidHostSnapshot(await plugin.loadSnapshot());
+      const snapshot = await plugin.loadSnapshot();
+      return snapshot === undefined || snapshot === null
+        ? null
+        : parseAndroidHostSnapshot(snapshot);
+    },
+
+    async loadRuntimeSnapshot(): Promise<AndroidRuntimeState | null> {
+      if (plugin.loadRuntimeSnapshot === undefined) {
+        throw new Error('Android host method unavailable: loadRuntimeSnapshot');
+      }
+      return parseAndroidRuntimeSnapshot(await plugin.loadRuntimeSnapshot());
+    },
+
+    async loadPetCatalog(): Promise<AndroidPetCatalogSnapshot | null> {
+      if (plugin.loadPetCatalog === undefined) {
+        throw new Error('Android host method unavailable: loadPetCatalog');
+      }
+      return parseAndroidPetCatalog(await plugin.loadPetCatalog());
     },
 
     async clearSettings(): Promise<void> { await plugin.clearSettings(); },
     async replaceHistory(historyJson): Promise<void> {
       historyJson.forEach(validateAndroidActivityEventJson);
       await plugin.replaceHistory({ historyJson: [...historyJson] });
+    },
+    async pruneHistory(before: number): Promise<void> {
+      if (!Number.isFinite(before)) throw new Error('invalid Android history cutoff');
+      if (plugin.pruneHistory === undefined) {
+        throw new Error('Android host method unavailable: pruneHistory');
+      }
+      await plugin.pruneHistory({ before });
     },
     async clearHistory(): Promise<void> { await plugin.clearHistory(); },
     async clearPets(): Promise<void> { await plugin.clearPets(); },
@@ -314,13 +414,14 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidTypedContro
       let disposed = false;
       let remove: (() => Promise<void>) | undefined;
       void plugin.addListener('stateChanged', (event) => {
-        if (disposed || typeof event !== 'object' || event === null || !('snapshot' in event)) return;
-        try {
-          const snapshot = parseAndroidHostSnapshot(event.snapshot);
-          if (snapshot !== null) listener({ type: 'stateChanged', snapshot });
-        } catch {
-          // Native storage is untrusted input; malformed change events are discarded.
+        if (disposed || typeof event !== 'object' || event === null) return;
+        if ('type' in event && event.type === 'runtimeStateChanged') {
+          if (!('revision' in event) || !Number.isSafeInteger(event.revision)
+            || (event.revision as number) < 0) return;
+          listener({ type: 'runtimeStateChanged', revision: event.revision as number });
+          return;
         }
+        listener({ type: 'stateChanged' });
       }).then((handle) => {
         remove = handle.remove;
         if (disposed) void remove();
@@ -369,6 +470,7 @@ export function createAndroidHost(plugin: AndroidHostPlugin): AndroidTypedContro
       }).then((handle) => {
         remove = handle.remove;
         if (disposed) void remove();
+        else void plugin.refreshPendingArchive?.();
       });
       return () => {
         disposed = true;

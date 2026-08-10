@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import io.elevenlabs.codexpetpause.MainActivity
 import io.elevenlabs.codexpetpause.R
+import io.elevenlabs.codexpetpause.bridge.AndroidCommittedStateBus
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
 import io.elevenlabs.codexpetpause.bridge.AndroidStateFileSystem
 import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
@@ -112,6 +113,24 @@ class ReminderEngineTest {
         assertEquals("scheduled", savedReminder("lookAway").getString("status"))
         assertEquals(70_000L, savedReminder("lookAway").getLong("nextDueAt"))
         assertEquals("completed", savedHistory().getJSONObject(0).getString("action"))
+    }
+
+    @Test
+    fun overlayCompletionPublishesTheCommittedRuntimeRevision() {
+        now = 10_000L
+        seed(reminders = reminders(lookAwayDueAt = 1_000L))
+        val engine = ReminderEngine(store, clock, eventIds)
+        engine.reconcile(now)
+        val revisions = mutableListOf<Long>()
+        val unsubscribe = AndroidCommittedStateBus.subscribe(revisions::add)
+
+        try {
+            engine.complete("lookAway")
+
+            assertEquals(listOf(savedSnapshot().getLong("runtimeRevision")), revisions)
+        } finally {
+            unsubscribe()
+        }
     }
 
     @Test
@@ -398,14 +417,14 @@ class ReminderEngineTest {
         val factory = ReminderNotificationFactory(context)
 
         assertEquals(ReminderSound.SYSTEM, factory.soundFor(ReminderPet.IMPORTED_CODEX, soundEnabled = true))
-        assertEquals(ReminderSound.CAT, factory.soundFor(ReminderPet.BUILT_IN_CAT, soundEnabled = true))
+        assertEquals(ReminderSound.SYSTEM, factory.soundFor(ReminderPet.BUILT_IN_CAT, soundEnabled = true))
         assertEquals(ReminderSound.SILENT, factory.soundFor(ReminderPet.BUILT_IN_CAT, soundEnabled = false))
         assertFalse(factory.requiresRuntimePermission(32))
         assertTrue(factory.requiresRuntimePermission(33))
     }
 
     @Test
-    fun immutableCatSystemAndSilentChannelsUseTheirIntendedNativeSounds() {
+    fun allEnabledPetsShareTheNewSystemChannelAndSilentRemainsSilent() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory = ReminderNotificationFactory(context)
         factory.ensureChannels()
@@ -414,9 +433,9 @@ class ReminderEngineTest {
         val system = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.IMPORTED_CODEX, soundEnabled = true))
         val silent = manager.getNotificationChannel(factory.channelIdFor(ReminderPet.BUILT_IN_CAT, soundEnabled = false))
 
-        assertNotEquals(cat.id, system.id)
+        assertEquals(cat.id, system.id)
         assertNotEquals(cat.id, silent.id)
-        assertNotEquals(Settings.System.DEFAULT_NOTIFICATION_URI, cat.sound)
+        assertEquals(Settings.System.DEFAULT_NOTIFICATION_URI, cat.sound)
         assertEquals(Settings.System.DEFAULT_NOTIFICATION_URI, system.sound)
         assertNull(silent.sound)
     }

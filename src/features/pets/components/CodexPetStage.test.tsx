@@ -68,6 +68,7 @@ function createController({
     },
     hydrate: vi.fn(async () => undefined),
     reconcileNow: vi.fn(async () => undefined),
+    applyCommittedRuntimeState: vi.fn(),
     complete: vi.fn(async (id: string) => removeDue(id, true)),
     snooze: vi.fn(async (id: string) => removeDue(id, false)),
     skip: vi.fn(async (id: string) => removeDue(id, false)),

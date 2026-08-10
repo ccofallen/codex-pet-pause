@@ -2,8 +2,27 @@ import type { ActivityEvent, AppSettings } from '../../app/model';
 import type { HistoryRepository } from '../../infrastructure/historyRepository';
 import type { PetRepository } from '../../infrastructure/petRepository';
 import type { SettingsRepository } from '../../infrastructure/settingsRepository';
-import type { StoredCodexPet } from '../../features/pets/domain/types';
+import type { CatalogCodexPet, StoredCodexPet } from '../../features/pets/domain/types';
+import type { AndroidRuntimeRepository } from './androidRuntimeRepository';
 import type { AndroidHost, AndroidHostSnapshot, AndroidPetWrite } from '../bridge/androidHost';
+
+export interface AndroidSnapshotReader {
+  load(): Promise<AndroidHostSnapshot | null>;
+  invalidate(): void;
+}
+
+export function createAndroidSnapshotReader(host: AndroidHost): AndroidSnapshotReader {
+  let cached: Promise<AndroidHostSnapshot | null> | undefined;
+  return {
+    load(): Promise<AndroidHostSnapshot | null> {
+      cached ??= host.loadSnapshot();
+      return cached;
+    },
+    invalidate(): void {
+      cached = undefined;
+    },
+  };
+}
 
 function parseRecord(value: string, message: string): Record<string, unknown> {
   try {
@@ -59,7 +78,10 @@ function parseHistoryEvent(value: string): ActivityEvent {
   return parsed as unknown as ActivityEvent;
 }
 
-function parsePet(asset: { id: string; metadataJson: string; spritesheetBase64: string }): StoredCodexPet {
+function parsePet(asset: { id: string; metadataJson: string; spritesheetBase64?: string }): StoredCodexPet {
+  if (typeof asset.spritesheetBase64 !== 'string') {
+    throw new Error('Android pet spritesheet unavailable');
+  }
   const metadata = parseRecord(asset.metadataJson, 'invalid Android pet metadata');
   if (metadata.id !== asset.id
     || typeof metadata.displayName !== 'string'
@@ -76,7 +98,35 @@ function parsePet(asset: { id: string; metadataJson: string; spritesheetBase64: 
   } as StoredCodexPet;
 }
 
+function parseCatalogPet(asset: {
+  id: string;
+  metadataJson: string;
+  assetRevision: string;
+  thumbnailBase64: string | null;
+}): CatalogCodexPet {
+  const metadata = parseRecord(asset.metadataJson, 'invalid Android pet metadata');
+  if (metadata.id !== asset.id
+    || typeof metadata.displayName !== 'string'
+    || (metadata.spriteVersion !== 1 && metadata.spriteVersion !== 2)
+    || typeof metadata.spritesheetFilename !== 'string'
+    || typeof metadata.importedAt !== 'number'
+    || typeof metadata.updatedAt !== 'number') {
+    throw new Error('invalid Android pet metadata');
+  }
+  const thumbnail = asset.thumbnailBase64 === null
+    ? undefined
+    : new Blob([decodeBase64(asset.thumbnailBase64)], { type: 'image/png' });
+  return {
+    ...metadata,
+    id: asset.id,
+    assetKind: 'catalog',
+    atlasRevision: asset.assetRevision,
+    ...(thumbnail === undefined ? {} : { thumbnail }),
+  } as CatalogCodexPet;
+}
+
 export function parseAndroidCommittedAppState(snapshot: AndroidHostSnapshot): {
+  revision: number;
   settings: AppSettings;
   pets: StoredCodexPet[];
 } {
@@ -84,56 +134,81 @@ export function parseAndroidCommittedAppState(snapshot: AndroidHostSnapshot): {
   const settings = parseRecord(snapshot.settingsJson, 'invalid Android settings');
   if (settings.schemaVersion !== 5) throw new Error('invalid Android settings');
   return {
+    revision: snapshot.runtimeRevision ?? 0,
     settings: settings as unknown as AppSettings,
     pets: snapshot.pets.map(parsePet),
   };
 }
 
-export function createAndroidSettingsRepository(host: AndroidHost): SettingsRepository {
+export function createAndroidSettingsRepository(
+  host: AndroidHost,
+  createInitialSettings?: () => AppSettings,
+  snapshotReader: AndroidSnapshotReader = createAndroidSnapshotReader(host),
+): SettingsRepository {
   return {
     async load(): Promise<AppSettings | null> {
-      const snapshot = await host.loadSnapshot();
-      if (snapshot === null || snapshot.settingsJson === null) return null;
+      const snapshot = await snapshotReader.load();
+      if (snapshot === null || snapshot.settingsJson === null) {
+        if (createInitialSettings === undefined) return null;
+        const initial = createInitialSettings();
+        await host.saveSettings(JSON.stringify(initial));
+        snapshotReader.invalidate();
+        return initial;
+      }
       const value = parseRecord(snapshot.settingsJson, 'invalid Android settings');
       if (value.schemaVersion !== 5) throw new Error('invalid Android settings');
       return value as unknown as AppSettings;
     },
     async save(value: AppSettings): Promise<void> {
       await host.saveSettings(JSON.stringify(value));
+      snapshotReader.invalidate();
     },
     async clear(): Promise<void> {
       await host.clearSettings();
+      snapshotReader.invalidate();
     },
   };
 }
 
-export function createAndroidHistoryRepository(host: AndroidHost): HistoryRepository {
+export function createAndroidHistoryRepository(
+  host: AndroidHost,
+  snapshotReader: AndroidSnapshotReader = createAndroidSnapshotReader(host),
+): HistoryRepository {
   return {
     async append(value: ActivityEvent): Promise<void> {
       await host.appendHistory(JSON.stringify(value));
+      snapshotReader.invalidate();
     },
     async listSince(timestamp: number): Promise<ActivityEvent[]> {
-      const snapshot = await host.loadSnapshot();
+      const snapshot = await snapshotReader.load();
       return snapshot === null ? [] : snapshot.historyJson
         .map(parseHistoryEvent)
         .filter((event) => event.occurredAt >= timestamp);
     },
     async prune(now): Promise<void> {
-      const snapshot = await host.loadSnapshot();
-      if (snapshot === null) return;
-      await host.replaceHistory(snapshot.historyJson.filter((value) => parseHistoryEvent(value).occurredAt >= now - 90 * 24 * 60 * 60 * 1000));
+      await host.pruneHistory(now - 90 * 24 * 60 * 60 * 1000);
+      snapshotReader.invalidate();
     },
-    async clear(): Promise<void> { await host.clearHistory(); },
+    async clear(): Promise<void> {
+      await host.clearHistory();
+      snapshotReader.invalidate();
+    },
   };
 }
 
-export function createAndroidPetRepository(host: AndroidHost): PetRepository {
+export function createAndroidPetRepository(
+  host: AndroidHost,
+  snapshotReader?: AndroidSnapshotReader,
+): Omit<PetRepository, 'list'> & { list(): Promise<CatalogCodexPet[]> } {
   return {
-    async list(): Promise<StoredCodexPet[]> {
-      const snapshot = await host.loadSnapshot();
-      return snapshot === null ? [] : snapshot.pets.map(parsePet);
+    selectionFallbackAtomic: true,
+    async list(): Promise<CatalogCodexPet[]> {
+      if (host.loadPetCatalog === undefined) throw new Error('Android pet catalog unavailable');
+      const catalog = await host.loadPetCatalog();
+      return catalog === null ? [] : catalog.pets.map(parseCatalogPet);
     },
     async put(value: StoredCodexPet): Promise<void> {
+      if (!(value?.spritesheet instanceof Blob)) throw new Error('full Android pet spritesheet required');
       const { spritesheet, ...metadata } = value;
       const bytes = new Uint8Array(await readAndroidBlobBytes(spritesheet));
       if (bytes.byteLength === 0) throw new Error("empty Android pet spritesheet");
@@ -143,12 +218,60 @@ export function createAndroidPetRepository(host: AndroidHost): PetRepository {
         spritesheetBase64: encodeBase64(bytes),
       };
       await host.savePet(input);
+      snapshotReader?.invalidate();
     },
     async delete(id: string): Promise<void> {
       await host.deletePet(id);
+      snapshotReader?.invalidate();
     },
     async clear(): Promise<void> {
       await host.clearPets();
+      snapshotReader?.invalidate();
     },
+  };
+}
+
+export function createAndroidAppRepositories(
+  host: AndroidHost,
+  runtime: AndroidRuntimeRepository,
+  createInitialSettings: () => AppSettings,
+): { settings: SettingsRepository; history: HistoryRepository; pets: PetRepository } {
+  const settings: SettingsRepository = {
+    async load(): Promise<AppSettings> {
+      const state = await runtime.load();
+      if (state !== null) return state.settings;
+      const initial = createInitialSettings();
+      await host.saveSettings(JSON.stringify(initial));
+      runtime.invalidate();
+      return initial;
+    },
+    async save(value): Promise<void> {
+      await host.saveSettings(JSON.stringify(value));
+      runtime.invalidate();
+    },
+    async clear(): Promise<void> {
+      await host.clearSettings();
+      runtime.invalidate();
+    },
+  };
+  const history: HistoryRepository = {
+    async append(value): Promise<void> {
+      await host.appendHistory(JSON.stringify(value));
+      runtime.invalidate();
+    },
+    listSince: (timestamp) => runtime.listHistorySince(timestamp),
+    async prune(now): Promise<void> {
+      await host.pruneHistory(now - 90 * 24 * 60 * 60 * 1000);
+      runtime.invalidate();
+    },
+    async clear(): Promise<void> {
+      await host.clearHistory();
+      runtime.invalidate();
+    },
+  };
+  return {
+    settings,
+    history,
+    pets: { ...createAndroidPetRepository(host), deferListUntilMounted: true },
   };
 }

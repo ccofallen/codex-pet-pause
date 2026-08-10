@@ -8,7 +8,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -34,6 +36,7 @@ import io.elevenlabs.codexpetpause.reminders.ReminderEngine
 import io.elevenlabs.codexpetpause.reminders.JobSchedulerReminderRecovery
 import io.elevenlabs.codexpetpause.reminders.ReminderNotificationFactory
 import io.elevenlabs.codexpetpause.reminders.ReminderQueueNotificationDispatcher
+import io.elevenlabs.codexpetpause.reminders.ReminderTransition
 import io.elevenlabs.codexpetpause.reminders.ShowReminder
 import io.elevenlabs.codexpetpause.reminders.SystemReminderClock
 import kotlin.math.roundToInt
@@ -43,10 +46,30 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.json.JSONObject
 
+internal fun overlayRendererSnapshot(snapshotJson: String): String {
+    val snapshot = JSONObject(snapshotJson)
+    snapshot.put("historyJson", org.json.JSONArray())
+    snapshot.put("pets", org.json.JSONArray())
+    snapshot.optJSONObject("overlay")
+        ?.optJSONObject("activePet")
+        ?.remove("spritesheetBase64")
+    return snapshot.toString()
+}
+
+internal fun shouldRecreateOverlayAfterRendererLoss(
+    petVisible: Boolean,
+    overlayGranted: Boolean,
+): Boolean = petVisible && overlayGranted
+
 internal interface OverlayWaitScheduler {
     fun scheduleAt(deadlineMs: Long, action: () -> Unit)
     fun cancel()
 }
+
+internal enum class OverlayTapAction { PET_INTERACTION, OPEN_REMINDER }
+
+internal fun overlayTapAction(hasPendingReminder: Boolean): OverlayTapAction =
+    if (hasPendingReminder) OverlayTapAction.OPEN_REMINDER else OverlayTapAction.PET_INTERACTION
 
 private class HandlerOverlayWaitScheduler(
     private val handler: Handler,
@@ -95,7 +118,17 @@ internal class OverlayGestureDispatcher(
     }
 }
 
-class PetOverlayService : Service() {
+open class PetOverlayService : Service() {
+    private data class ReminderReconciliationOutcome(
+        val succeeded: Boolean,
+        val pendingReminderKnown: Boolean,
+    )
+
+    private data class OverlayRendererSurface(
+        val mode: SurfaceMode,
+        val generation: Long,
+    )
+
     private var unsubscribeStateRefresh: (() -> Unit)? = null
     private enum class SurfaceMode { PET, MENU, BUBBLE }
 
@@ -104,21 +137,56 @@ class PetOverlayService : Service() {
     private lateinit var mainHandler: Handler
     private lateinit var displayManager: DisplayManager
     private lateinit var reminderEngine: ReminderEngine
+    private lateinit var reminderClock: io.elevenlabs.codexpetpause.reminders.ReminderClock
     private lateinit var reminderDelivery: ReminderDeliveryScheduler
     private lateinit var reminderNotifications: ReminderNotificationFactory
     private lateinit var lifecycle: AndroidServiceLifecycle
+    private lateinit var detachedSurfaceController: DetachedOverlaySurfaceController
+    private var debugControls: PetOverlayDebugControls? = null
     private val reminderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var webView: WebView? = null
+    internal var currentOverlayWebViewFactory: OverlayWebViewFactory? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var dispatcher: OverlayGestureDispatcher? = null
     private var geometry = OverlayGeometry()
     private var screenBounds = Bounds(400, 800)
     private var placement = OverlayPlacement(0, 0, PetSize.MEDIUM.sizeDp, Attachment.Free)
     private var surfaceMode = SurfaceMode.PET
+    private var surfaceGeneration = 0L
+    private var dragInteractionActive = false
+    private var lastTouchX = 0f
+    private val webEventGate = OverlayWebEventGate<JSONObject>()
+    private var pendingSurfaceEvent: JSONObject? = null
+    private var surfaceRetryIndex = 0
+    private val surfaceRetryRunnable = object : Runnable {
+        override fun run() {
+            val event = pendingSurfaceEvent ?: return
+            if (surfaceRetryIndex >= SURFACE_RETRY_DELAYS_MS.size) return
+            sendWebEvent(event)
+            mainHandler.postDelayed(this, SURFACE_RETRY_DELAYS_MS[surfaceRetryIndex++])
+        }
+    }
     private var placementDirty = false
     private var snapshotJson: String? = null
     private var density = 1f
     private var reminderReconciled = false
+    private var overlayWebViewGeneration = 0L
+    private var overlayRendererRecoveryRunnable: Runnable? = null
+    private var pendingRendererSurface: OverlayRendererSurface? = null
+    private var overlayRendererRecreationScheduled = false
+    private val overlayRendererRecreationRunnable = Runnable {
+        overlayRendererRecreationScheduled = false
+        val state = lifecycle.snapshot()
+        if (webView == null && shouldRecreateOverlayAfterRendererLoss(
+                petVisible = state.petVisible,
+                overlayGranted = hasOverlayPermission(),
+            )
+        ) {
+            showOverlay()
+        } else {
+            pendingRendererSurface = null
+        }
+    }
     private val displayReflowRunnable = Runnable(::reflowOverlayForCurrentDisplay)
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = scheduleDisplayReflow()
@@ -136,18 +204,46 @@ class PetOverlayService : Service() {
         mainHandler = Handler(Looper.getMainLooper())
         displayManager = getSystemService(DisplayManager::class.java)
         displayManager.registerDisplayListener(displayListener, mainHandler)
-        reminderEngine = ReminderEngine(coordinator)
+        debugControls = if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            PetOverlayDebugHooks.current()
+        } else {
+            null
+        }
+        reminderClock = debugControls ?: SystemReminderClock
+        reminderEngine = ReminderEngine(coordinator, reminderClock)
         reminderDelivery = ReminderDeliveryScheduler(
             reminderEngine,
-            SystemReminderClock,
-            CoroutineReminderLiveTimer(reminderScope),
-            JobSchedulerReminderRecovery(this),
+            reminderClock,
+            debugControls?.liveTimer ?: CoroutineReminderLiveTimer(reminderScope),
+            debugControls?.recoveryScheduler ?: JobSchedulerReminderRecovery(this),
         )
         reminderNotifications = ReminderNotificationFactory(this)
         lifecycle = AndroidServiceLifecycle.forContext(this)
         density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val detachedWebViews = OverlayWebViewFactory(context = this, onMessage = {})
+        detachedSurfaceController = DetachedOverlaySurfaceController(
+            context = this,
+            windowManager = windowManager,
+            handler = mainHandler,
+            screenBoundsProvider = { screenBounds },
+            anchorProvider = { placement },
+            snapshotProvider = {
+                val snapshot = snapshotJson ?: coordinator.loadSnapshot() ?: return@DetachedOverlaySurfaceController null
+                snapshotJson = snapshot
+                JSONObject(overlayRendererSnapshot(snapshot))
+            },
+            webViewFactory = DetachedWebViewFactory { mode, generation, onRendererGone, onMessage ->
+                detachedWebViews.createDetached(mode, generation, onRendererGone, onMessage)
+            },
+            onAction = ::handleDetachedSurfaceAction,
+            onSurfaceLost = ::handleDetachedSurfaceLost,
+            onWindowEvent = { event -> debugControls?.recordDetachedSurfaceWindowEvent(event) },
+        )
         createNotificationChannel()
         reminderNotifications.ensureChannels()
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            activeDebugInstance = this
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -156,9 +252,9 @@ class PetOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startInForeground()
         val action = intent?.action
         if (action == QUIT) {
-            startInForeground()
             quitService()
             return START_NOT_STICKY
         }
@@ -177,23 +273,22 @@ class PetOverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startInForeground()
-        if (state.petVisible && Settings.canDrawOverlays(this)) showOverlay() else hideOverlay()
+        if (state.petVisible && hasOverlayPermission()) showOverlay() else hideOverlay()
         when (action ?: START) {
             START, SHOW, HIDE -> {
-                reconcileReminders(openWhenDue = true)
+                reconcileReminders()
             }
             STATE_CHANGED -> {
                 refreshState()
-                reconcileReminders(openWhenDue = true)
+                reconcileReminders()
             }
             OPEN_REMINDER -> {
-                reconcileReminders(openWhenDue = true)
+                reconcileReminders()
                 openReminderBubble()
             }
             SNOOZE_CURRENT -> {
                 reminderEngine.pendingQueue().firstOrNull()?.let { id ->
-                    handleReminderTransition(reminderEngine.snooze(id, System.currentTimeMillis() + 10 * 60_000L))
+                    handleReminderTransition(reminderEngine.snooze(id, reminderClock.now() + 10 * 60_000L))
                 }
             }
         }
@@ -203,15 +298,24 @@ class PetOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        unsubscribeStateRefresh?.invoke()
-        unsubscribeStateRefresh = null
-        displayManager.unregisterDisplayListener(displayListener)
-        mainHandler.removeCallbacks(displayReflowRunnable)
-        reminderDelivery.stopLiveTimer()
-        reminderScope.cancel()
-        removeAllOverlayViews()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        super.onDestroy()
+        try {
+            unsubscribeStateRefresh?.invoke()
+            unsubscribeStateRefresh = null
+            displayManager.unregisterDisplayListener(displayListener)
+            mainHandler.removeCallbacks(displayReflowRunnable)
+            cancelOverlayRendererRecreation()
+            reminderDelivery.stopLiveTimer()
+            reminderScope.cancel()
+            runCatching { detachedSurfaceController.destroy() }
+            removeAllOverlayViews()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } finally {
+            try {
+                super.onDestroy()
+            } finally {
+                if (activeDebugInstance === this) activeDebugInstance = null
+            }
+        }
     }
 
     internal fun createPetLayoutParams(
@@ -223,7 +327,9 @@ class PetOverlayService : Service() {
         widthPx,
         heightPx,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
@@ -286,10 +392,15 @@ class PetOverlayService : Service() {
     }
 
     private fun showOverlay() {
-        if (webView != null || !Settings.canDrawOverlays(this)) return
+        if (webView != null || !hasOverlayPermission()) return
+        webEventGate.reset()
         screenBounds = currentScreenBounds()
         loadPlacementFromState()
-        surfaceMode = SurfaceMode.PET
+        surfaceMode = when (detachedSurfaceController.activeSurface?.mode) {
+            DetachedSurfaceMode.MENU -> SurfaceMode.MENU
+            DetachedSurfaceMode.BUBBLE -> SurfaceMode.BUBBLE
+            null -> SurfaceMode.PET
+        }
         rebuildDispatcher()
         val params = createPetLayoutParams(
             dpToPx(placement.sizeDp),
@@ -297,20 +408,35 @@ class PetOverlayService : Service() {
             dpToPx(placement.x),
             dpToPx(placement.y),
         )
-        val view = OverlayWebViewFactory(this) { message ->
-            mainHandler.post { handleWebMessage(message) }
-        }.create()
+        val viewGeneration = ++overlayWebViewGeneration
+        val factory = OverlayWebViewFactory(
+            context = this,
+            onMessage = { message -> mainHandler.post { handleWebMessage(message) } },
+            onRendererGone = { failedView -> scheduleOverlayRendererRecovery(failedView, viewGeneration) },
+        )
+        currentOverlayWebViewFactory = factory
+        val view = factory.create()
         view.setOnTouchListener(::onOverlayTouch)
         layoutParams = params
         webView = view
         windowManager.addView(view, params)
+        debugControls?.recordPetLayoutMutation("add-show", view, params)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            view.post {
+                if (view.parent != null) {
+                    view.systemGestureExclusionRects = listOf(Rect(0, 0, view.width, view.height))
+                }
+            }
+        }
     }
 
     private fun hideOverlay() {
+        cancelOverlayRendererRecreation()
         removeAllOverlayViews()
     }
 
     private fun quitService() {
+        cancelOverlayRendererRecreation()
         lifecycle.quit()
         reminderDelivery.cancelAll()
         reminderNotifications.cancel()
@@ -321,17 +447,97 @@ class PetOverlayService : Service() {
     }
 
     private fun removeAllOverlayViews() {
+        if (::detachedSurfaceController.isInitialized) runCatching { detachedSurfaceController.close() }
+        removePetOverlayView()
+        surfaceMode = SurfaceMode.PET
+    }
+
+    private fun removePetOverlayView() {
+        cancelSurfaceRetry()
+        webEventGate.reset()
         dispatcher?.cancelWait()
         dispatcher = null
         webView?.let { view ->
-            if (view.parent != null) runCatching { windowManager.removeViewImmediate(view) }
+            if (view.parent != null) {
+                layoutParams?.let { debugControls?.recordPetLayoutMutation("hide-remove", view, it) }
+                runCatching { windowManager.removeViewImmediate(view) }
+            }
             view.removeJavascriptInterface("AndroidOverlay")
             view.destroy()
         }
         webView = null
+        currentOverlayWebViewFactory = null
         layoutParams = null
-        surfaceMode = SurfaceMode.PET
     }
+
+    internal fun scheduleOverlayRendererRecovery(failedView: WebView, failedGeneration: Long): Boolean {
+        if (failedView !== webView || failedGeneration != overlayWebViewGeneration) return false
+        if (overlayRendererRecoveryRunnable != null) return true
+        lateinit var recovery: Runnable
+        recovery = Runnable {
+            if (overlayRendererRecoveryRunnable !== recovery) return@Runnable
+            overlayRendererRecoveryRunnable = null
+            recoverFromOverlayRendererLoss(failedView, failedGeneration)
+        }
+        overlayRendererRecoveryRunnable = recovery
+        mainHandler.post(recovery)
+        return true
+    }
+
+    private fun recoverFromOverlayRendererLoss(failedView: WebView, failedGeneration: Long) {
+        if (failedView !== webView || failedGeneration != overlayWebViewGeneration) return
+        pendingRendererSurface = OverlayRendererSurface(surfaceMode, surfaceGeneration)
+        removePetOverlayView()
+        val state = lifecycle.snapshot()
+        if (!shouldRecreateOverlayAfterRendererLoss(
+                petVisible = state.petVisible,
+                overlayGranted = hasOverlayPermission(),
+            ) || overlayRendererRecreationScheduled
+        ) {
+            return
+        }
+        overlayRendererRecreationScheduled = true
+        mainHandler.post(overlayRendererRecreationRunnable)
+    }
+
+    private fun restoreRendererSurfaceIfNeeded() {
+        val surface = pendingRendererSurface ?: return
+        pendingRendererSurface = null
+        if (!lifecycle.snapshot().petVisible) return
+        when (surface.mode) {
+            SurfaceMode.PET -> {
+                surfaceMode = SurfaceMode.PET
+                surfaceGeneration = surface.generation
+            }
+            SurfaceMode.MENU -> commitDetachedOpen(
+                SurfaceMode.MENU,
+                surface.generation,
+                detachedSurfaceController.openMenu(surface.generation),
+            )
+            SurfaceMode.BUBBLE -> if (reminderEngine.pendingQueue().isNotEmpty()) {
+                commitDetachedOpen(
+                    SurfaceMode.BUBBLE,
+                    surface.generation,
+                    detachedSurfaceController.openBubble(surface.generation),
+                )
+            } else {
+                surfaceMode = SurfaceMode.PET
+                rebuildDispatcher()
+                detachedSurfaceController.close()
+            }
+        }
+    }
+
+    private fun cancelOverlayRendererRecreation() {
+        if (!::mainHandler.isInitialized) return
+        overlayRendererRecoveryRunnable?.let(mainHandler::removeCallbacks)
+        overlayRendererRecoveryRunnable = null
+        mainHandler.removeCallbacks(overlayRendererRecreationRunnable)
+        overlayRendererRecreationScheduled = false
+        pendingRendererSurface = null
+    }
+
+    protected open fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
 
     private fun scheduleDisplayReflow() {
         if (!::mainHandler.isInitialized) return
@@ -343,8 +549,6 @@ class PetOverlayService : Service() {
         if (webView == null) return
         val params = layoutParams ?: return
         val previousDensity = density
-        val widthDp = (params.width / previousDensity).roundToInt().coerceAtLeast(1)
-        val heightDp = (params.height / previousDensity).roundToInt().coerceAtLeast(1)
         val previousBounds = screenBounds
         density = resources.displayMetrics.density.coerceAtLeast(1f)
         val currentBounds = currentScreenBounds()
@@ -353,9 +557,8 @@ class PetOverlayService : Service() {
         placement = geometry.reflowForBounds(placement, previousBounds, currentBounds)
         screenBounds = currentBounds
         rebuildDispatcher()
-        updateSurfaceBounds(widthDp, heightDp)
-        placementDirty = true
-        persistPlacement()
+        updatePetBounds()
+        detachedSurfaceController.reflow()
         sendPlacementChanged()
     }
 
@@ -367,7 +570,8 @@ class PetOverlayService : Service() {
             placement = geometry.resizeAroundAnchor(placement, nextSize, screenBounds)
             geometry = OverlayGeometry(defaultSizeDp = nextSize)
             rebuildDispatcher()
-            if (surfaceMode == SurfaceMode.PET) updateSurfaceBounds(nextSize, nextSize)
+            updatePetBounds()
+            detachedSurfaceController.reflow()
         }
         sendState()
     }
@@ -417,12 +621,32 @@ class PetOverlayService : Service() {
     }
 
     private fun onOverlayTouch(view: View, event: MotionEvent): Boolean {
+        if (surfaceMode == SurfaceMode.MENU) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) closeOverlayMenu()
+            return true
+        }
+        if (surfaceMode != SurfaceMode.PET) return false
         val sample = event.toMotionEventSample()
+        val before = placement
         dispatcher?.consume(sample)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> lastTouchX = sample.x
+            MotionEvent.ACTION_MOVE -> if (placement != before) {
+                val facing = if (sample.x < lastTouchX) "left" else "right"
+                val type = if (dragInteractionActive) "pet-drag-move" else "pet-drag-start"
+                dragInteractionActive = true
+                sendWebEvent(JSONObject().put("type", type).put("facing", facing))
+                lastTouchX = sample.x
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragInteractionActive) {
+                dragInteractionActive = false
+                sendWebEvent(JSONObject().put("type", "pet-drag-end"))
+            }
+        }
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
             if (placementDirty) persistPlacement()
         }
-        return surfaceMode == SurfaceMode.PET
+        return true
     }
 
     private fun MotionEvent.toMotionEventSample(): MotionEventSample {
@@ -446,22 +670,25 @@ class PetOverlayService : Service() {
         if (surfaceMode != SurfaceMode.PET) return
         when (result) {
             OverlayGestureResult.NoOp -> Unit
-            OverlayGestureResult.SingleTap -> sendWebEvent(JSONObject().put("type", "pet-tap"))
+            OverlayGestureResult.SingleTap -> handlePetSingleTap()
             OverlayGestureResult.OpenMenu -> {
-                surfaceMode = SurfaceMode.MENU
-                updateSurfaceBounds(placement.sizeDp + MENU_WIDTH_DP + SURFACE_GAP_DP, maxOf(placement.sizeDp, MENU_HEIGHT_DP))
-                sendWebEvent(JSONObject().put("type", "open-menu").put("side", placementSide()))
+                val generation = surfaceGeneration + 1
+                commitDetachedOpen(
+                    SurfaceMode.MENU,
+                    generation,
+                    detachedSurfaceController.openMenu(generation),
+                )
             }
             OverlayGestureResult.Restored -> {
                 placement = dispatcher?.placement ?: placement
                 placementDirty = true
-                updateSurfaceBounds(placement.sizeDp, placement.sizeDp)
+                updatePetBounds()
                 sendPlacementChanged()
             }
             is OverlayGestureResult.PlacementChanged -> {
                 placement = result.placement
                 placementDirty = true
-                updateSurfaceBounds(placement.sizeDp, placement.sizeDp)
+                updatePetPosition()
                 sendPlacementChanged()
             }
         }
@@ -469,68 +696,145 @@ class PetOverlayService : Service() {
 
     internal fun handleWebMessage(message: OverlayWebMessage) {
         when (message) {
-            OverlayWebMessage.Ready -> sendState()
-            is OverlayWebMessage.BubbleSizeChanged -> {
-                surfaceMode = SurfaceMode.BUBBLE
-                updateSurfaceBounds(message.widthDp, message.heightDp)
-            }
-            is OverlayWebMessage.MenuAction -> when (message.action) {
-                OverlayMenuAction.SETTINGS -> {
-                    collapseToPet()
-                    startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-                OverlayMenuAction.HIDE -> {
-                    lifecycle.hide()
-                    hideOverlay()
-                }
-                OverlayMenuAction.QUIT -> quitService()
-            }
-            is OverlayWebMessage.ReminderAction -> {
-                val transition = runCatching {
-                    when (message.action) {
-                        OverlayReminderAction.COMPLETE -> reminderEngine.complete(message.reminderId)
-                        OverlayReminderAction.SKIP -> reminderEngine.skip(message.reminderId)
-                        OverlayReminderAction.SNOOZE -> reminderEngine.snooze(
-                            message.reminderId,
-                            System.currentTimeMillis() + requireNotNull(message.snoozeMinutes) * 60_000L,
-                        )
-                    }
-                }.getOrElse {
-                    snapshotJson = coordinator.loadSnapshot()
+            OverlayWebMessage.Ready -> webEventGate.markReady(
+                {
                     sendState()
-                    return
-                }
-                handleReminderTransition(transition)
+                    restoreRendererSurfaceIfNeeded()
+                },
+                ::dispatchWebEvent,
+            )
+            is OverlayWebMessage.SurfaceRendered -> acknowledgeSurface(message.mode, message.generation)
+            is OverlayWebMessage.BubbleSizeChanged -> Unit
+            is OverlayWebMessage.MenuAction -> Unit
+            is OverlayWebMessage.ReminderAction -> Unit
+        }
+    }
+
+    internal fun handlePetSingleTap(): OverlayTapAction? {
+        val reconciliation = reconcileReminders()
+        val action = when {
+            reconciliation.pendingReminderKnown -> OverlayTapAction.OPEN_REMINDER
+            reconciliation.succeeded -> OverlayTapAction.PET_INTERACTION
+            else -> null
+        }
+        when (action) {
+            OverlayTapAction.PET_INTERACTION -> sendWebEvent(JSONObject().put("type", "pet-tap"))
+            OverlayTapAction.OPEN_REMINDER -> openReminderBubble()
+            null -> Unit
+        }
+        return action
+    }
+
+    private fun handleDetachedSurfaceAction(action: DetachedSurfaceAction) {
+        val active = detachedSurfaceController.activeSurface ?: return
+        if (action.generation != active.generation) return
+        when (action) {
+            is DetachedSurfaceAction.Menu -> if (active.mode == DetachedSurfaceMode.MENU) {
+                handleMenuAction(action.action)
+            }
+            is DetachedSurfaceAction.Reminder -> if (active.mode == DetachedSurfaceMode.BUBBLE) {
+                handleReminderAction(action.reminderId, action.action, action.snoozeMinutes)
             }
         }
     }
 
-    private fun reconcileReminders(openWhenDue: Boolean) {
-        val queueBefore = reminderEngine.pendingQueue()
-        val transition = runCatching { reminderEngine.reconcile() }.getOrElse {
-            reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+    internal fun dispatchDebugDetachedSurfaceAction(action: DetachedSurfaceAction): Boolean {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0 || activeDebugInstance !== this) {
+            return false
+        }
+        val active = detachedSurfaceController.activeSurface ?: return false
+        if (action.generation != active.generation) return false
+        handleDetachedSurfaceAction(action)
+        return true
+    }
+
+    internal fun handleDetachedSurfaceLost(loss: DetachedSurfaceLoss) {
+        val expectedMode = when (loss.mode) {
+            DetachedSurfaceMode.MENU -> SurfaceMode.MENU
+            DetachedSurfaceMode.BUBBLE -> SurfaceMode.BUBBLE
+        }
+        if (surfaceMode != expectedMode || surfaceGeneration != loss.generation) return
+        if (detachedSurfaceController.activeSurface != null) return
+        surfaceMode = SurfaceMode.PET
+        rebuildDispatcher()
+    }
+
+    private fun handleMenuAction(action: OverlayMenuAction) {
+        when (action) {
+            OverlayMenuAction.CLOSE -> closeOverlayMenu()
+            OverlayMenuAction.SETTINGS -> {
+                closeOverlayMenu()
+                startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            OverlayMenuAction.HIDE -> {
+                lifecycle.hide()
+                AndroidCapabilitiesChangedBus.publish()
+                hideOverlay()
+            }
+            OverlayMenuAction.QUIT -> quitService()
+        }
+    }
+
+    private fun handleReminderAction(
+        reminderId: String,
+        action: OverlayReminderAction,
+        snoozeMinutes: Int?,
+    ) {
+        val transition = runCatching {
+            when (action) {
+                OverlayReminderAction.COMPLETE -> reminderEngine.complete(reminderId)
+                OverlayReminderAction.SKIP -> reminderEngine.skip(reminderId)
+                OverlayReminderAction.SNOOZE -> reminderEngine.snooze(
+                    reminderId,
+                    reminderClock.now() + requireNotNull(snoozeMinutes) * 60_000L,
+                )
+            }
+        }.getOrElse {
+            snapshotJson = coordinator.loadSnapshot()
+            sendState()
             return
         }
-        val queueAfter = reminderEngine.pendingQueue()
+        handleReminderTransition(transition)
+    }
+
+    private fun reconcileReminders(): ReminderReconciliationOutcome {
+        val queueBefore = runCatching { reminderEngine.pendingQueue() }.getOrNull()
+        val transition = runCatching { reconcileReminderEngine() }.getOrElse {
+            reminderDelivery.reschedule { reconcileReminders() }
+            return ReminderReconciliationOutcome(
+                succeeded = false,
+                pendingReminderKnown = queueBefore?.isNotEmpty() == true,
+            )
+        }
+        val queueAfter = runCatching { reminderEngine.pendingQueue() }.getOrElse {
+            reminderDelivery.reschedule { reconcileReminders() }
+            return ReminderReconciliationOutcome(
+                succeeded = false,
+                pendingReminderKnown = queueBefore?.isNotEmpty() == true,
+            )
+        }
         snapshotJson = coordinator.loadSnapshot()
-        val shouldNotify = queueAfter.isNotEmpty() && (!reminderReconciled || queueBefore.isEmpty())
+        val shouldNotify = queueAfter.isNotEmpty() && (!reminderReconciled || queueBefore.isNullOrEmpty())
         reminderReconciled = true
         if (shouldNotify) {
             snapshotJson?.let {
                 ReminderQueueNotificationDispatcher(reminderNotifications).show(it, queueAfter.first())
             }
         }
-        reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+        reminderDelivery.reschedule { reconcileReminders() }
         sendState()
-        when {
-            transition is ShowReminder && openWhenDue -> openReminderBubble()
-            transition == CloseBubble && surfaceMode == SurfaceMode.BUBBLE -> closeReminderBubble()
-        }
+        if (transition == CloseBubble && surfaceMode == SurfaceMode.BUBBLE) closeReminderBubble()
+        return ReminderReconciliationOutcome(
+            succeeded = true,
+            pendingReminderKnown = queueAfter.isNotEmpty(),
+        )
     }
+
+    internal open fun reconcileReminderEngine(): ReminderTransition = reminderEngine.reconcile()
 
     private fun handleReminderTransition(transition: io.elevenlabs.codexpetpause.reminders.ReminderTransition) {
         snapshotJson = coordinator.loadSnapshot()
-        reminderDelivery.reschedule { reconcileReminders(openWhenDue = true) }
+        reminderDelivery.reschedule { reconcileReminders() }
         sendState()
         when (transition) {
             is ShowReminder -> {
@@ -545,11 +849,35 @@ class PetOverlayService : Service() {
 
     private fun openReminderBubble() {
         if (reminderEngine.pendingQueue().isEmpty()) return
+        if (!lifecycle.snapshot().petVisible) return
         showOverlay()
         if (webView == null) return
-        surfaceMode = SurfaceMode.BUBBLE
+        val generation = surfaceGeneration + 1
         sendState()
-        sendWebEvent(JSONObject().put("type", "show-reminder"))
+        commitDetachedOpen(
+            SurfaceMode.BUBBLE,
+            generation,
+            detachedSurfaceController.openBubble(generation),
+        )
+    }
+
+    private fun commitDetachedOpen(mode: SurfaceMode, generation: Long, opened: Boolean) {
+        if (opened) {
+            surfaceMode = mode
+            surfaceGeneration = generation
+            return
+        }
+        val active = detachedSurfaceController.activeSurface
+        surfaceMode = when (active?.mode) {
+            DetachedSurfaceMode.MENU -> SurfaceMode.MENU
+            DetachedSurfaceMode.BUBBLE -> SurfaceMode.BUBBLE
+            null -> SurfaceMode.PET
+        }
+        if (active != null) {
+            surfaceGeneration = active.generation
+        } else {
+            rebuildDispatcher()
+        }
     }
 
     private fun closeReminderBubble() {
@@ -558,23 +886,36 @@ class PetOverlayService : Service() {
         collapseToPet()
     }
 
-    private fun collapseToPet() {
-        surfaceMode = SurfaceMode.PET
-        rebuildDispatcher()
-        updateSurfaceBounds(placement.sizeDp, placement.sizeDp)
+    private fun closeOverlayMenu() {
+        sendWebEvent(JSONObject().put("type", "close-menu"))
+        collapseToPet()
     }
 
-    private fun updateSurfaceBounds(widthDp: Int, heightDp: Int) {
+    private fun collapseToPet() {
+        cancelSurfaceRetry()
+        detachedSurfaceController.close(surfaceGeneration)
+        surfaceMode = SurfaceMode.PET
+        surfaceGeneration += 1
+        rebuildDispatcher()
+    }
+
+    private fun updatePetBounds() {
         val view = webView ?: return
         val params = layoutParams ?: return
-        val safeWidth = widthDp.coerceIn(1, screenBounds.right - screenBounds.left)
-        val safeHeight = heightDp.coerceIn(1, screenBounds.bottom - screenBounds.top)
-        val expandLeft = placementSide() == "right" && safeWidth > placement.sizeDp
-        val expandUp = placement.y + safeHeight > screenBounds.bottom
-        params.width = dpToPx(safeWidth)
-        params.height = dpToPx(safeHeight)
-        params.x = dpToPx(if (expandLeft) placement.x + placement.sizeDp - safeWidth else placement.x)
-        params.y = dpToPx(if (expandUp) placement.y + placement.sizeDp - safeHeight else placement.y)
+        params.width = dpToPx(placement.sizeDp)
+        params.height = dpToPx(placement.sizeDp)
+        params.x = dpToPx(placement.x)
+        params.y = dpToPx(placement.y)
+        debugControls?.recordPetLayoutMutation("bounds", view, params)
+        windowManager.updateViewLayout(view, params)
+    }
+
+    private fun updatePetPosition() {
+        val view = webView ?: return
+        val params = layoutParams ?: return
+        params.x = dpToPx(placement.x)
+        params.y = dpToPx(placement.y)
+        debugControls?.recordPetLayoutMutation("position", view, params)
         windowManager.updateViewLayout(view, params)
     }
 
@@ -592,7 +933,7 @@ class PetOverlayService : Service() {
     private fun sendState() {
         val snapshot = snapshotJson ?: coordinator.loadSnapshot() ?: return
         snapshotJson = snapshot
-        sendWebEvent(JSONObject().put("type", "state-changed").put("snapshot", JSONObject(snapshot)))
+        sendWebEvent(JSONObject().put("type", "state-changed").put("snapshot", JSONObject(overlayRendererSnapshot(snapshot))))
     }
 
     private fun sendPlacementChanged() {
@@ -602,6 +943,31 @@ class PetOverlayService : Service() {
     }
 
     private fun sendWebEvent(message: JSONObject) {
+        webEventGate.send(message, ::dispatchWebEvent)
+    }
+
+    private fun sendSurfaceEvent(message: JSONObject) {
+        cancelSurfaceRetry()
+        pendingSurfaceEvent = JSONObject(message.toString())
+        surfaceRetryIndex = 0
+        sendWebEvent(message)
+        mainHandler.postDelayed(surfaceRetryRunnable, SURFACE_RETRY_DELAYS_MS[surfaceRetryIndex++])
+    }
+
+    private fun acknowledgeSurface(mode: String, generation: Long) {
+        val pending = pendingSurfaceEvent ?: return
+        if (pending.optString("mode") == mode && pending.optLong("generation", -1L) == generation) {
+            cancelSurfaceRetry()
+        }
+    }
+
+    private fun cancelSurfaceRetry() {
+        if (::mainHandler.isInitialized) mainHandler.removeCallbacks(surfaceRetryRunnable)
+        pendingSurfaceEvent = null
+        surfaceRetryIndex = 0
+    }
+
+    private fun dispatchWebEvent(message: JSONObject) {
         val script = "window.dispatchEvent(new CustomEvent('android-overlay-message',{detail:${message}}));"
         webView?.post { webView?.evaluateJavascript(script, null) }
     }
@@ -609,9 +975,9 @@ class PetOverlayService : Service() {
     private fun placementSide(): String =
         if (placement.x + placement.sizeDp / 2 >= (screenBounds.left + screenBounds.right) / 2) "right" else "left"
 
-    private fun currentScreenBounds(): Bounds {
+    protected open fun currentScreenBounds(): Bounds {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val metrics = windowManager.currentWindowMetrics
+            val metrics = windowManager.maximumWindowMetrics
             val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
                 WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
             )
@@ -640,9 +1006,14 @@ class PetOverlayService : Service() {
         )
     }
 
-    private fun dpToPx(value: Int): Int = (value * density).roundToInt().coerceAtLeast(1)
+    private fun dpToPx(value: Int): Int = (value * density).roundToInt()
 
     companion object {
+        @Volatile
+        internal var activeDebugInstance: PetOverlayService? = null
+            private set
+
+        private val SURFACE_RETRY_DELAYS_MS = longArrayOf(100L, 250L, 500L, 1_000L)
         const val START = "START"
         const val SHOW = "SHOW"
         const val HIDE = "HIDE"
@@ -657,10 +1028,6 @@ class PetOverlayService : Service() {
         private const val SHOW_REQUEST = 7101
         private const val SETTINGS_REQUEST = 7102
         private const val QUIT_REQUEST = 7103
-        private const val MENU_WIDTH_DP = 136
-        private const val MENU_HEIGHT_DP = 132
-        private const val SURFACE_GAP_DP = 8
-
         fun requestQuit(context: Context) {
             AndroidServiceLifecycle.forContext(context).quit()
             JobSchedulerReminderRecovery(context).apply {

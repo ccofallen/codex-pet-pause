@@ -7,8 +7,8 @@ import java.io.ByteArrayInputStream
 
 internal object PetdexProcessServiceWorkerPolicy {
     val client = object : ServiceWorkerClient() {
-        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
-            blockedResponse()
+        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+            if (PetdexSecurityPolicy.isAllowedSubresource(request.url.toString())) null else blockedResponse()
     }
 
     private fun blockedResponse() = WebResourceResponse(

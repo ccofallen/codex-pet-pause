@@ -13,7 +13,7 @@ export const DesktopApp = memo(function DesktopApp() {
     <I18nProvider locale={snapshot.settings.locale}>
       <ThemeProvider mode={snapshot.settings.theme}>
         <div className="desktop-pet-root">
-          {activeImportedPet === undefined
+          {activeImportedPet === undefined || !('spritesheet' in activeImportedPet)
             ? <InteractiveCatStage key={`builtin:${snapshot.settings.activePetId}`} />
             : <CodexPetStage key={`imported:${activeImportedPet.id}`} pet={activeImportedPet} />}
         </div>

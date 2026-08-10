@@ -1,14 +1,13 @@
-import { useMemo, useState } from 'react';
-import { useAppController, useAppSnapshot } from '../../app/AppProvider';
-import { InsightsPanel } from '../../features/insights/InsightsPanel';
+import { useEffect, useState } from 'react';
+import { useAppSnapshot } from '../../app/AppProvider';
 import { PetLibrary } from '../../features/pets/components/PetLibrary';
-import { Dashboard } from '../../features/reminders/components/Dashboard';
 import { SettingsPage } from '../../features/settings/SettingsPage';
 import { useI18n } from '../../i18n/I18nProvider';
 import type { AndroidControlHost } from '../bridge/androidHost';
 import { AndroidCapabilityStatus } from './AndroidCapabilityStatus';
-import { createAndroidPetImport } from '../infrastructure/androidPetImport';
-import { parseAndroidCommittedAppState } from '../infrastructure/androidRepositories';
+import { AndroidCompanionView } from './AndroidCompanionView';
+import { AndroidPetLibrary } from './AndroidPetLibrary';
+import { createAndroidPetImport, type AndroidPetImport } from '../infrastructure/androidPetImport';
 
 type AndroidView = 'companion' | 'reminders' | 'pet' | 'settings';
 
@@ -21,14 +20,24 @@ const navigation: readonly { view: AndroidView; label: 'nav.companion' | 'nav.re
 
 export function AndroidApp({ host }: { host?: AndroidControlHost }) {
   const { t } = useI18n();
-  const controller = useAppController();
   const snapshot = useAppSnapshot();
   const [view, setView] = useState<AndroidView>('settings');
-  const petImport = useMemo(() => host === undefined
-    ? undefined
-    : createAndroidPetImport(host, (committedSnapshot) => {
-      controller.applyCommittedState?.(parseAndroidCommittedAppState(committedSnapshot));
-    }), [controller, host]);
+  const [petImport, setPetImport] = useState<AndroidPetImport>();
+
+  useEffect(() => {
+    if (host === undefined) {
+      setPetImport(undefined);
+      return undefined;
+    }
+    const nextImport = createAndroidPetImport(host);
+    const disconnect = nextImport.connect(() => setView('pet'));
+    setPetImport(nextImport);
+    return () => {
+      disconnect();
+      nextImport.dispose();
+      setPetImport((current) => current === nextImport ? undefined : current);
+    };
+  }, [host]);
 
   if (!snapshot.ready) {
     return (
@@ -48,9 +57,11 @@ export function AndroidApp({ host }: { host?: AndroidControlHost }) {
 
   const renderView = () => {
     switch (view) {
-      case 'companion': return <><Dashboard /><InsightsPanel /></>;
+      case 'companion': return <AndroidCompanionView />;
       case 'reminders': return <SettingsPage section="reminders" formId="android-reminders-form" />;
-      case 'pet': return <PetLibrary {...(petImport === undefined ? {} : { androidImport: petImport })} />;
+      case 'pet': return host === undefined
+        ? <PetLibrary />
+        : petImport === undefined ? null : <AndroidPetLibrary host={host} androidImport={petImport} />;
       case 'settings': return <SettingsPage section="general" formId="android-settings-form" />;
     }
   };

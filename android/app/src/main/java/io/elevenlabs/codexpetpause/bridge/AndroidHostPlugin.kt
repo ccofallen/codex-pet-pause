@@ -24,6 +24,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import io.elevenlabs.codexpetpause.overlay.AndroidServiceLifecycle
+import io.elevenlabs.codexpetpause.overlay.AndroidCapabilitiesChangedBus
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import io.elevenlabs.codexpetpause.overlay.PetOverlayStateRefreshBus
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
@@ -38,6 +39,35 @@ import java.util.Locale
 
 private const val NOTIFICATION_PERMISSION_ALIAS = "notifications"
 private const val PERMISSION_PREFERENCES = "android-permission-onboarding"
+private const val MAX_SAFE_JAVASCRIPT_INTEGER = 9_007_199_254_740_991L
+
+internal data class AndroidHostPluginEvent(
+    val name: String,
+    val payload: JSObject,
+)
+
+internal fun androidRuntimeStateChangedEvent(revision: Long) = AndroidHostPluginEvent(
+    name = "stateChanged",
+    payload = JSObject()
+        .put("type", "runtimeStateChanged")
+        .put("revision", revision),
+)
+
+internal fun androidHistoryCutoff(value: Any?): Double? = when (value) {
+    is Byte, is Short, is Int, is Long -> value.toLong().let { integer ->
+        integer.toDouble().takeIf { integer in 0..MAX_SAFE_JAVASCRIPT_INTEGER }
+    }
+    is Float, is Double -> value.toDouble().takeIf { it.isFinite() && it >= 0.0 }
+    else -> null
+}
+
+internal fun deliverOverlayRefresh(
+    publish: () -> Int,
+    fallback: () -> Throwable?,
+): Throwable? {
+    val listenerCount = runCatching(publish).getOrNull()
+    return if (listenerCount != null && listenerCount > 0) null else fallback()
+}
 
 @CapacitorPlugin(
     name = "AndroidHost",
@@ -52,6 +82,8 @@ open class AndroidHostPlugin : Plugin() {
     private lateinit var hostLifecycle: AndroidHostLifecycle
     private lateinit var pendingArchiveQueue: PendingPetImportQueue
     private lateinit var overlayRefreshRetrier: AndroidOverlayRefreshRetrier
+    private var unsubscribeCapabilitiesChanged: (() -> Unit)? = null
+    private var unsubscribeCommittedState: (() -> Unit)? = null
 
     override fun load() {
         coordinator = AndroidStateCoordinatorRegistry.forFilesDir(context.filesDir)
@@ -63,6 +95,15 @@ open class AndroidHostPlugin : Plugin() {
             onExhausted = { error -> Log.w(TAG, "Overlay refresh retries exhausted", error) },
         )
         pendingArchiveQueue = PendingPetImportQueue(PendingPetArchiveStore(context.cacheDir))
+        unsubscribeCapabilitiesChanged = AndroidCapabilitiesChangedBus.subscribe {
+            handler.post { notifyCapabilities(capabilitiesJson()) }
+        }
+        unsubscribeCommittedState = AndroidCommittedStateBus.subscribe { revision ->
+            handler.post {
+                val event = androidRuntimeStateChangedEvent(revision)
+                notifyListeners(event.name, event.payload)
+            }
+        }
         installResumeBoundary(
             serviceLifecycle = lifecycle,
             canDrawOverlay = { Settings.canDrawOverlays(context) },
@@ -76,6 +117,14 @@ open class AndroidHostPlugin : Plugin() {
         )
         hostLifecycle.onUserLaunch()
         announceNextPendingArchive()
+    }
+
+    override fun handleOnDestroy() {
+        unsubscribeCapabilitiesChanged?.invoke()
+        unsubscribeCapabilitiesChanged = null
+        unsubscribeCommittedState?.invoke()
+        unsubscribeCommittedState = null
+        super.handleOnDestroy()
     }
 
     override fun handleOnResume() {
@@ -147,6 +196,12 @@ open class AndroidHostPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun refreshPendingArchive(call: PluginCall) {
+        pendingArchiveQueue.currentAnnouncement()?.let(::announcePendingArchive)
+        call.resolve()
+    }
+
+    @PluginMethod
     fun completePendingArchive(call: PluginCall) {
         val token = call.getString("token") ?: return call.reject("pending archive token is required")
         val outcome = call.getString("outcome") ?: return call.reject("pending archive outcome is required")
@@ -164,7 +219,12 @@ open class AndroidHostPlugin : Plugin() {
         val id = call.getString("id") ?: return call.reject("pet id is required")
         val metadata = call.getString("metadataJson") ?: return call.reject("pet metadata is required")
         val spritesheet = call.getString("spritesheetBase64") ?: return call.reject("pet spritesheet is required")
-        complete(call, "could not persist validated pet", refreshReminderService = true) {
+        complete(
+            call,
+            "could not persist validated pet",
+            refreshReminderService = true,
+            includeSnapshot = true,
+        ) {
             coordinator.persistValidatedPet(id, metadata, spritesheet)
         }
     }
@@ -272,6 +332,24 @@ open class AndroidHostPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun loadRuntimeSnapshot(call: PluginCall) {
+        try {
+            call.resolve(coordinator.loadRuntimeSnapshot()?.let(::JSObject))
+        } catch (error: Exception) {
+            call.reject("could not load Android runtime state", error)
+        }
+    }
+
+    @PluginMethod
+    fun loadPetCatalog(call: PluginCall) {
+        try {
+            call.resolve(coordinator.loadPetCatalog()?.let(::JSObject))
+        } catch (error: Exception) {
+            call.reject("could not load Android pet catalog", error)
+        }
+    }
+
+    @PluginMethod
     fun saveSettings(call: PluginCall) {
         val settings = call.getString("json") ?: return call.reject("settings JSON is required")
         complete(call, "invalid settings JSON", refreshReminderService = true) { coordinator.saveSettings(settings) }
@@ -279,7 +357,12 @@ open class AndroidHostPlugin : Plugin() {
 
     @PluginMethod
     fun clearSettings(call: PluginCall) =
-        complete(call, "could not clear settings", refreshReminderService = true, coordinator::clearSettings)
+        complete(
+            call,
+            "could not clear settings",
+            refreshReminderService = true,
+            mutation = coordinator::clearSettings,
+        )
 
     @PluginMethod
     fun appendHistory(call: PluginCall) {
@@ -296,6 +379,16 @@ open class AndroidHostPlugin : Plugin() {
             return call.reject("invalid history JSON", error)
         }
         complete(call, "invalid history JSON") { coordinator.replaceHistory(history) }
+    }
+
+    @PluginMethod
+    fun pruneHistory(call: PluginCall) {
+        if (!call.data.has("before") || call.data.isNull("before")) {
+            return call.reject("history cutoff is required")
+        }
+        val before = androidHistoryCutoff(call.data.opt("before"))
+            ?: return call.reject("invalid history cutoff")
+        complete(call, "invalid history cutoff") { coordinator.pruneHistory(before) }
     }
 
     @PluginMethod
@@ -335,17 +428,18 @@ open class AndroidHostPlugin : Plugin() {
         call: PluginCall,
         message: String,
         refreshReminderService: Boolean = false,
+        includeSnapshot: Boolean = false,
         mutation: () -> String?,
     ) {
         val result = try {
             AndroidCommittedMutationEffects.run(
                 mutation = mutation,
-                emitSnapshot = { snapshot ->
-                    notifyListeners("stateChanged", JSObject().put("snapshot", JSObject(snapshot)))
-                },
+                emitSnapshot = { },
                 refreshOverlay = if (refreshReminderService) ({
-                    PetOverlayStateRefreshBus.publish()
-                    overlayRefreshRetrier.refresh()?.let { throw it }
+                    deliverOverlayRefresh(
+                        publish = PetOverlayStateRefreshBus::publish,
+                        fallback = overlayRefreshRetrier::refresh,
+                    )?.let { throw it }
                 }) else null,
             )
         } catch (error: Exception) {
@@ -354,7 +448,7 @@ open class AndroidHostPlugin : Plugin() {
         result.eventWarning?.let { Log.w(TAG, "Committed state event could not be published", it) }
         result.refreshWarning?.let { Log.w(TAG, "Committed state overlay refresh will retry later", it) }
         val response = JSObject().put("refreshWarning", result.refreshWarning != null)
-        result.snapshot?.let { response.put("snapshot", JSObject(it)) }
+        result.bridgeSnapshot(includeSnapshot)?.let { response.put("snapshot", JSObject(it)) }
         call.resolve(response)
     }
 

@@ -10,7 +10,112 @@ const rawSnapshot = {
   overlay: { xRatio: 0.2, yRatio: 0.3 },
 };
 
+const rawRuntimeSnapshot = {
+  schemaVersion: 1,
+  revision: 4,
+  settingsJson: rawSnapshot.settingsJson,
+  historyJson: [],
+};
+
 describe('createAndroidHost', () => {
+  test('loads only compact Android pet metadata and bounded thumbnails', async () => {
+    let fullSnapshotLoads = 0;
+    const rawCatalog = {
+      revision: 9,
+      activePetId: 'momo',
+      pets: [{
+        id: 'momo',
+        metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}',
+        assetRevision: '00000000000000000000000000000001',
+        thumbnailBase64: 'dGlueQ==',
+      }],
+    };
+    const host = createAndroidHost({
+      loadSnapshot: async () => { fullSnapshotLoads += 1; return rawSnapshot; },
+      loadPetCatalog: async () => rawCatalog,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async () => ({ remove: async () => undefined }),
+    });
+
+    await expect(host.loadPetCatalog()).resolves.toEqual(rawCatalog);
+    expect(fullSnapshotLoads).toBe(0);
+    expect(JSON.stringify(await host.loadPetCatalog())).not.toContain('spritesheetBase64');
+  });
+
+  test('rejects a native pet catalog that contains a full spritesheet payload', async () => {
+    const host = createAndroidHost({
+      loadSnapshot: async () => rawSnapshot,
+      loadPetCatalog: async () => ({
+        revision: 1,
+        activePetId: 'momo',
+        pets: [{
+          id: 'momo',
+          metadataJson: '{"id":"momo","displayName":"Momo","spriteVersion":2,"spritesheetFilename":"momo.webp","importedAt":10,"updatedAt":20}',
+          assetRevision: '00000000000000000000000000000001',
+          thumbnailBase64: 'dGlueQ==',
+          spritesheetBase64: 'ZnVsbC1hdGxhcw==',
+        }],
+      }),
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async () => ({ remove: async () => undefined }),
+    });
+
+    await expect(host.loadPetCatalog()).rejects.toThrow('invalid Android pet catalog');
+  });
+
+  test('rejects a catalog whose active pet is absent from the compact entries', async () => {
+    const host = createAndroidHost({
+      loadSnapshot: async () => rawSnapshot,
+      loadPetCatalog: async () => ({ revision: 1, activePetId: 'missing', pets: [] }),
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async () => ({ remove: async () => undefined }),
+    });
+
+    await expect(host.loadPetCatalog()).rejects.toThrow('invalid Android pet catalog');
+  });
+
+  test('normalizes a missing Capacitor snapshot to null on clean install', async () => {
+    const host = createAndroidHost({
+      loadSnapshot: async () => undefined,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async () => ({ remove: async () => undefined }),
+    });
+
+    await expect(host.loadSnapshot()).resolves.toBeNull();
+  });
+
   test('loads a strictly parsed snapshot from the Capacitor plugin', async () => {
     const host = createAndroidHost({
       loadSnapshot: async () => rawSnapshot,
@@ -29,7 +134,30 @@ describe('createAndroidHost', () => {
     await expect(host.loadSnapshot()).resolves.toEqual(rawSnapshot);
   });
 
-  test('forwards validated state change events and removes the native listener', async () => {
+  test('loads the compact runtime snapshot without hydrating pet assets', async () => {
+    const host = createAndroidHost({
+      loadSnapshot: async () => { throw new Error('full snapshot must not load'); },
+      loadRuntimeSnapshot: async () => rawRuntimeSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async () => ({ remove: async () => undefined }),
+    });
+
+    await expect(host.loadRuntimeSnapshot()).resolves.toEqual({
+      revision: 4,
+      settings: createDefaultSettings(1, 'en'),
+      history: [],
+    });
+  });
+
+  test('forwards lightweight state change signals and removes the native listener', async () => {
     let nativeListener: ((value: unknown) => void) | undefined;
     let removed = false;
     const plugin: AndroidHostPlugin = {
@@ -51,13 +179,41 @@ describe('createAndroidHost', () => {
     const received: unknown[] = [];
     const unsubscribe = createAndroidHost(plugin).subscribe((event) => received.push(event));
 
-    nativeListener?.({ snapshot: rawSnapshot });
+    nativeListener?.({});
     await Promise.resolve();
     unsubscribe();
     await Promise.resolve();
 
-    expect(received).toEqual([{ type: 'stateChanged', snapshot: rawSnapshot }]);
+    expect(received).toEqual([{ type: 'stateChanged' }]);
     expect(removed).toBe(true);
+  });
+
+  test('forwards only valid revisioned runtime state signals', async () => {
+    let nativeListener: ((value: unknown) => void) | undefined;
+    const plugin: AndroidHostPlugin = {
+      loadSnapshot: async () => rawSnapshot,
+      clearSettings: async () => undefined,
+      replaceHistory: async () => undefined,
+      clearHistory: async () => undefined,
+      clearPets: async () => undefined,
+      saveSettings: async () => undefined,
+      appendHistory: async () => undefined,
+      savePet: async () => undefined,
+      deletePet: async () => undefined,
+      selectPet: async () => undefined,
+      addListener: async (_event, listener) => {
+        nativeListener = listener;
+        return { remove: async () => undefined };
+      },
+    };
+    const received: unknown[] = [];
+    createAndroidHost(plugin).subscribe((event) => received.push(event));
+
+    nativeListener?.({ type: 'runtimeStateChanged', revision: 8 });
+    nativeListener?.({ type: 'runtimeStateChanged', revision: 7.5 });
+    nativeListener?.({ type: 'runtimeStateChanged', revision: -1 });
+
+    expect(received).toEqual([{ type: 'runtimeStateChanged', revision: 8 }]);
   });
 
   test('forwards every required maintenance operation to the native plugin', async () => {
@@ -66,6 +222,7 @@ describe('createAndroidHost', () => {
       loadSnapshot: async () => null,
       clearSettings: async () => { calls.push('clearSettings'); },
       replaceHistory: async ({ historyJson }) => { calls.push(`replaceHistory:${historyJson.length}`); },
+      pruneHistory: async ({ before }) => { calls.push(`pruneHistory:${before}`); },
       clearHistory: async () => { calls.push('clearHistory'); },
       clearPets: async () => { calls.push('clearPets'); },
       saveSettings: async () => undefined,
@@ -79,10 +236,13 @@ describe('createAndroidHost', () => {
 
     await host.clearSettings();
     await host.replaceHistory(['{"id":"event-1","action":"completed","occurredAt":1}']);
+    await host.pruneHistory(123);
     await host.clearHistory();
     await host.clearPets();
 
-    expect(calls).toEqual(['clearSettings', 'replaceHistory:1', 'clearHistory', 'clearPets']);
+    expect(calls).toEqual([
+      'clearSettings', 'replaceHistory:1', 'pruneHistory:123', 'clearHistory', 'clearPets',
+    ]);
   });
 
   test('rejects type-confused JSON and non-canonical base64 before native calls', async () => {
@@ -258,11 +418,14 @@ describe('createAndroidHost', () => {
         if (eventName === 'petArchiveReady') nativeListener = listener;
         return { remove: async () => undefined };
       },
+      refreshPendingArchive: vi.fn(async () => undefined),
     };
     const received: unknown[] = [];
     const unsubscribe = createAndroidHost(plugin)
       .subscribePetArchives((event) => received.push(event));
 
+    await Promise.resolve();
+    expect(plugin.refreshPendingArchive).toHaveBeenCalledOnce();
     nativeListener?.({ token: 'download-1' });
     nativeListener?.({ token: '../escape' });
     await Promise.resolve();

@@ -1,12 +1,14 @@
 package io.elevenlabs.codexpetpause
 
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinator
 import io.elevenlabs.codexpetpause.bridge.AndroidStateCoordinatorRegistry
 import io.elevenlabs.codexpetpause.bridge.AndroidStateStore
 import io.elevenlabs.codexpetpause.petdex.PendingPetArchiveStore
+import io.elevenlabs.codexpetpause.petdex.InvalidPetArchive
 import io.elevenlabs.codexpetpause.overlay.PetOverlayService
 import java.io.ByteArrayInputStream
 import org.json.JSONObject
@@ -36,8 +38,8 @@ class PetImportPersistenceTest {
 
     @Test
     fun validNestedArchivePreviewsUsesAndReconstructsAfterActivityRelaunch() {
-        val fixture = testAsset("task9-valid-pet.zip")
-        val atlasFixture = testAsset("task9-valid-pet.webp")
+        val fixture = DeviceQa.testAsset("task9-valid-pet.zip")
+        val atlasFixture = DeviceQa.testAsset("task9-valid-pet.webp")
         val decodedFixture = requireNotNull(
             BitmapFactory.decodeByteArray(atlasFixture, 0, atlasFixture.size),
         )
@@ -62,9 +64,23 @@ class PetImportPersistenceTest {
             }
 
             scenario.recreate()
-            DeviceQa.awaitText("Phone status", "手机状态")
+            DeviceQa.awaitText("Phone navigation", "手机导航")
             DeviceQa.clickText("Pet", "宠物")
             DeviceQa.awaitText("Task 9 Momo")
+
+            val builtinStartedAt = SystemClock.elapsedRealtime()
+            DeviceQa.clickWebButton(scenario, "Use Momo", "使用 Momo")
+            DeviceQa.awaitCondition("built-in pet selected without a stale imported overlay") {
+                selectedPetId() == "builtin-cat" && activeOverlayPetId() == null
+            }
+            assertTrue(SystemClock.elapsedRealtime() - builtinStartedAt < 6_000L)
+
+            val importedStartedAt = SystemClock.elapsedRealtime()
+            DeviceQa.clickWebButton(scenario, "Use Task 9 Momo", "使用 Task 9 Momo")
+            DeviceQa.awaitCondition("imported pet reselected without an app freeze") {
+                selectedPetId() == "task9-momo" && activeOverlayPetId() == "task9-momo"
+            }
+            assertTrue(SystemClock.elapsedRealtime() - importedStartedAt < 6_000L)
         }
 
         val reconstructed = AndroidStateCoordinator(
@@ -90,17 +106,18 @@ class PetImportPersistenceTest {
         assertEquals(DeviceQa.dp(72), overlay.width())
         assertEquals(DeviceQa.dp(72), overlay.height())
         assertEquals("task9-momo", selectedPetId())
+        DeviceQa.assertOverlayDrawsVisiblePixels()
     }
 
     @Test
     fun pendingStoreRejectsNonArchiveMimeAndUnsafeDisplayName() {
-        val fixture = testAsset("task9-valid-pet.zip")
+        val fixture = DeviceQa.testAsset("task9-valid-pet.zip")
         val store = PendingPetArchiveStore(DeviceQa.context.cacheDir)
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(InvalidPetArchive::class.java) {
             store.accept(ByteArrayInputStream(fixture), "text/plain", "task9-valid-pet.zip")
         }
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(InvalidPetArchive::class.java) {
             store.accept(ByteArrayInputStream(fixture), "application/zip", "../escape.zip")
         }
         assertTrue(store.pendingTokens().isEmpty())
@@ -112,12 +129,10 @@ class PetImportPersistenceTest {
         return JSONObject(snapshot.getString("settingsJson")).optString("activePetId")
     }
 
-    private fun testAsset(name: String): ByteArray {
-        return androidx.test.platform.app.InstrumentationRegistry
-            .getInstrumentation()
-            .context
-            .assets
-            .open(name)
-            .use { it.readBytes() }
+    private fun activeOverlayPetId(): String? {
+        val coordinator = AndroidStateCoordinatorRegistry.forFilesDir(DeviceQa.context.filesDir)
+        val snapshot = JSONObject(requireNotNull(coordinator.loadSnapshot()))
+        return snapshot.getJSONObject("overlay").optJSONObject("activePet")?.optString("id")
     }
+
 }

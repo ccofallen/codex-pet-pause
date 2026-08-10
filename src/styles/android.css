@@ -33,12 +33,12 @@
 
 [data-app-host='android'] .android-capability-status {
   display: grid;
-  gap: 0.45rem;
-  padding: 1rem;
-  border: 1px solid var(--color-border);
-  border-radius: 1rem;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 [data-app-host='android'] .android-capability-status h2,
@@ -59,12 +59,22 @@
   border-top: 1px solid var(--color-border);
 }
 
+[data-app-host='android'] .android-onboarding--ready {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 [data-app-host='android'] .android-onboarding h3 { margin: 0; font-size: 1rem; }
 
 [data-app-host='android'] .android-onboarding-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+}
+
+[data-app-host='android'] .android-onboarding--ready .android-service-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 [data-app-host='android'] .android-onboarding button {
@@ -76,6 +86,11 @@
   background: var(--color-surface-solid);
   font: inherit;
   font-weight: 700;
+}
+
+[data-app-host='android'] .android-onboarding--ready .android-service-actions button {
+  min-height: 48px;
+  padding: 0.45rem 0.65rem;
 }
 
 [data-app-host='android'] .android-onboarding button:last-child {
@@ -111,6 +126,116 @@
 
 [data-app-host='android'] .android-thumb-actions[hidden] { display: none; }
 
+[data-app-host='android'] .android-companion {
+  display: grid;
+  gap: 0.8rem;
+}
+
+[data-app-host='android'] .android-companion p,
+[data-app-host='android'] .android-companion h1,
+[data-app-host='android'] .android-companion h2 { margin: 0; }
+
+[data-app-host='android'] .android-companion-header {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0.95rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.2rem;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+[data-app-host='android'] .android-companion-kicker,
+[data-app-host='android'] .android-companion-label,
+[data-app-host='android'] .android-next-reminder > p:first-child,
+[data-app-host='android'] .android-companion-summaries p,
+[data-app-host='android'] .android-later-reminder p {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+[data-app-host='android'] .android-companion-label { margin-top: 0.35rem; }
+
+[data-app-host='android'] .android-companion-header > div:first-child { min-width: 0; }
+
+[data-app-host='android'] .android-companion-header h1 {
+  margin-top: 0.05rem;
+  font-size: clamp(1.45rem, 7vw, 2rem);
+  overflow-wrap: anywhere;
+}
+
+[data-app-host='android'] .android-companion-status {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+[data-app-host='android'] .android-companion-status span {
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-solid));
+}
+
+[data-app-host='android'] .android-next-reminder {
+  padding: 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  border-radius: 1.3rem;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--color-accent) 15%, var(--color-surface)), var(--color-surface));
+  box-shadow: var(--shadow-card);
+}
+
+[data-app-host='android'] .android-next-reminder h2 {
+  margin-top: 0.35rem;
+  font-size: 1.15rem;
+}
+
+[data-app-host='android'] .android-next-countdown {
+  margin-top: 0.35rem !important;
+  color: var(--color-accent-strong);
+  font-size: clamp(2rem, 12vw, 3.2rem);
+  font-weight: 850;
+  line-height: 1;
+}
+
+[data-app-host='android'] .android-companion-summaries {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+[data-app-host='android'] .android-companion-summaries article,
+[data-app-host='android'] .android-later-reminder,
+[data-app-host='android'] .android-companion-empty {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: var(--color-surface);
+}
+
+[data-app-host='android'] .android-companion-summaries strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.05rem;
+}
+
+[data-app-host='android'] .android-later-reminder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.75rem;
+  align-items: center;
+}
+
+[data-app-host='android'] .android-later-reminder p { grid-column: 1 / -1; }
+[data-app-host='android'] .android-later-reminder span { color: var(--color-muted); }
+
 [data-app-host='android'] .pet-import { grid-template-columns: minmax(0, 1fr); }
 
 [data-app-host='android'] .android-pet-import-actions {
@@ -122,6 +247,60 @@
   width: 100%;
   min-height: 56px;
   padding: 0.8rem 1rem;
+}
+
+[data-app-host='android'] .android-pet-library {
+  gap: 0.75rem;
+}
+
+[data-app-host='android'] .android-pet-library .pet-import {
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-radius: 1rem;
+}
+
+[data-app-host='android'] .android-pet-library .pet-card-grid { gap: 0.65rem; }
+
+[data-app-host='android'] .android-pet-library .pet-card {
+  gap: 0.55rem;
+  padding: 0.85rem;
+  border-radius: 1rem;
+}
+
+[data-app-host='android'] .android-pet-library .pet-card-preview { min-height: 5.5rem; }
+
+[data-app-host='android'] .android-pet-library .pet-card-preview .cat-sprite-stack {
+  width: 5rem;
+  height: 5rem;
+}
+
+[data-app-host='android'] .pet-library .pet-import-help-button {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  max-width: 48px;
+  max-height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+[data-app-host='android'] .pet-library .pet-import-help-button > span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  max-width: 24px;
+  max-height: 24px;
+  aspect-ratio: 1;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  color: var(--color-muted);
+  background: var(--color-surface-solid);
 }
 
 [data-app-host='android'] .android-thumb-actions button,
@@ -186,5 +365,5 @@
 }
 
 @media (max-width: 380px) {
-  [data-app-host='android'] .android-onboarding-actions { grid-template-columns: minmax(0, 1fr); }
+  [data-app-host='android'] .android-onboarding-actions:not(.android-service-actions) { grid-template-columns: minmax(0, 1fr); }
 }

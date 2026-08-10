@@ -1,5 +1,7 @@
 package io.elevenlabs.codexpetpause.bridge
 
+import io.elevenlabs.codexpetpause.pets.AndroidPetCatalog
+import io.elevenlabs.codexpetpause.pets.PetThumbnailCatalogStore
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -15,11 +17,49 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class AndroidStateCoordinatorTest {
+    @Test
+    fun loadsACompactPetCatalogWithoutChangingPersistedPets() {
+        val fixture = fixtureWithPets("momo")
+        val previous = requireNotNull(fixture.store.readSnapshot())
+        val thumbnails = object : PetThumbnailCatalogStore {
+            override fun thumbnailBase64(assetPath: String) = "dGlueQ=="
+            override fun retain(assetPaths: Set<String>) = Unit
+        }
+        val coordinator = AndroidStateCoordinator(fixture.store, AndroidPetCatalog(thumbnails))
+
+        val catalog = requireNotNull(coordinator.loadPetCatalog())
+
+        assertFalse(catalog.contains("spritesheetBase64"))
+        assertEquals("builtin-cat", JSONObject(catalog).getString("activePetId"))
+        assertEquals(previous, fixture.store.readSnapshot())
+    }
+
     @Test
     fun cleanInstallHasNoSnapshot() {
         assertNull(fixture().coordinator.loadSnapshot())
+    }
+
+    @Test
+    fun pruneHistoryReadsCurrentStateAfterAStaleSnapshotWasCaptured() {
+        val fixture = fixture()
+        fixture.store.writeSnapshot(snapshot(emptyList(), null))
+        val stale = JSONObject(requireNotNull(fixture.coordinator.loadSnapshot()))
+        assertEquals(1, stale.getJSONArray("historyJson").length())
+        fixture.coordinator.appendHistory(NEW_EVENT)
+
+        fixture.coordinator.pruneHistory(150.0)
+
+        val history = JSONObject(requireNotNull(fixture.coordinator.loadSnapshot()))
+            .getJSONArray("historyJson")
+        assertEquals(1, history.length())
+        assertEquals("event-2", JSONObject(history.getString(0)).getString("id"))
     }
 
     @Test
@@ -90,6 +130,26 @@ class AndroidStateCoordinatorTest {
     }
 
     @Test
+    fun savingSettingsSynchronizesImportedAndBuiltinOverlaySelection() {
+        val fixture = fixtureWithPets("momo", "luna")
+        val initial = JSONObject(requireNotNull(fixture.coordinator.loadSnapshot()))
+        val settings = JSONObject(initial.getString("settingsJson"))
+
+        fixture.coordinator.saveSettings(settings.put("activePetId", "luna").toString())
+
+        val imported = JSONObject(requireNotNull(fixture.coordinator.loadSnapshot()))
+        assertEquals(
+            "luna",
+            imported.getJSONObject("overlay").getJSONObject("activePet").getString("id"),
+        )
+
+        fixture.coordinator.saveSettings(settings.put("activePetId", "builtin-cat").toString())
+
+        val builtin = JSONObject(requireNotNull(fixture.coordinator.loadSnapshot()))
+        assertFalse(builtin.getJSONObject("overlay").has("activePet"))
+    }
+
+    @Test
     fun failedValidatedPetCommitKeepsThePreviousActivePet() {
         val fixture = fixture()
         fixture.store.writeSnapshot(snapshot(emptyList(), null))
@@ -107,6 +167,11 @@ class AndroidStateCoordinatorTest {
     @Test
     fun deleteCommitsReferenceRemovalBeforeBestEffortAssetCleanup() {
         val fixture = fixtureWithPets("momo")
+        val selectedSettings = JSONObject(requireNotNull(fixture.store.readSnapshot()))
+            .getString("settingsJson")
+            .let(::JSONObject)
+            .put("activePetId", "momo")
+        fixture.coordinator.saveSettings(selectedSettings.toString())
         val oldPath = assetPath(JSONObject(fixture.store.readSnapshot()!!).getJSONArray("pets").getJSONObject(0))
         fixture.fileSystem.failNextDelete()
 
@@ -115,7 +180,44 @@ class AndroidStateCoordinatorTest {
         val stored = JSONObject(fixture.store.readSnapshot()!!)
         assertEquals(0, stored.getJSONArray("pets").length())
         assertFalse(stored.getJSONObject("overlay").has("activePet"))
+        assertEquals("builtin-cat", JSONObject(stored.getString("settingsJson")).getString("activePetId"))
         assertArrayEquals("old".toByteArray(), fixture.fileSystem.readBytes(oldPath))
+    }
+
+    @Test
+    fun clearPetsCommitsBuiltinSelectionInTheSameSnapshot() {
+        val fixture = fixtureWithPets("momo", "luna")
+        val selectedSettings = JSONObject(requireNotNull(fixture.store.readSnapshot()))
+            .getString("settingsJson")
+            .let(::JSONObject)
+            .put("activePetId", "luna")
+        fixture.coordinator.saveSettings(selectedSettings.toString())
+
+        fixture.coordinator.clearPets()
+
+        val stored = JSONObject(requireNotNull(fixture.store.readSnapshot()))
+        assertEquals(0, stored.getJSONArray("pets").length())
+        assertFalse(stored.getJSONObject("overlay").has("activePet"))
+        assertEquals("builtin-cat", JSONObject(stored.getString("settingsJson")).getString("activePetId"))
+    }
+
+    @Test
+    fun selectedPetDeleteWriteFailurePreservesCatalogSettingsOverlayAndAssets() {
+        val fixture = fixtureWithPets("momo")
+        val selectedSettings = JSONObject(requireNotNull(fixture.store.readSnapshot()))
+            .getString("settingsJson")
+            .let(::JSONObject)
+            .put("activePetId", "momo")
+        fixture.coordinator.saveSettings(selectedSettings.toString())
+        val previous = requireNotNull(fixture.store.readSnapshot())
+        val asset = JSONObject(previous).getJSONArray("pets").getJSONObject(0)
+        val path = assetPath(asset)
+        fixture.fileSystem.failNextAtomicWrite()
+
+        assertThrows(IOException::class.java) { fixture.coordinator.deletePet("momo") }
+
+        assertEquals(previous, fixture.store.readSnapshot())
+        assertArrayEquals("old".toByteArray(), fixture.fileSystem.readBytes(path))
     }
 
     @Test
@@ -194,6 +296,7 @@ class AndroidStateCoordinatorTest {
         private const val NEW_REVISION = "00000000000000000000000000000002"
         private const val ORPHAN_REVISION = "0000000000000000000000000000000f"
         private const val EVENT = """{"id":"event-1","action":"completed","occurredAt":100}"""
+        private const val NEW_EVENT = """{"id":"event-2","action":"completed","occurredAt":200}"""
         private const val REMINDERS = """[{"id":"lookAway","kind":"preset","type":"lookAway","enabled":false,"intervalMinutes":20,"nextDueAt":1200000,"status":"disabled"},{"id":"drinkWater","kind":"preset","type":"drinkWater","enabled":false,"intervalMinutes":45,"nextDueAt":2700000,"status":"disabled"},{"id":"standUp","kind":"preset","type":"standUp","enabled":false,"intervalMinutes":60,"nextDueAt":3600000,"status":"disabled"},{"id":"takeBreak","kind":"preset","type":"takeBreak","enabled":false,"intervalMinutes":90,"nextDueAt":5400000,"status":"disabled"}]"""
         private const val SETTINGS = """{"schemaVersion":5,"locale":"en","onboardingComplete":false,"theme":"system","petSize":"medium","soundEnabled":false,"animationsEnabled":true,"affinity":0,"quietHours":{"enabled":false,"startMinutes":1320,"endMinutes":420},"runtime":{},"cat":{"name":"Momo"},"activePetId":"builtin-cat","petPosition":{"xRatio":0.82,"yRatio":0.72},"reminders":$REMINDERS}"""
 

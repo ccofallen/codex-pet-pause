@@ -106,9 +106,118 @@ test('forwards immediate native archive-ready events and unsubscribes cleanly', 
   const unsubscribe = petImport.subscribe((event) => received.push(event));
   nativeListener?.({ type: 'pet-archive-ready', token: 'download-1' });
   unsubscribe();
+  petImport.dispose();
 
-  expect(received).toEqual([{ type: 'pet-archive-ready', token: 'download-1' }]);
+  expect(received).toEqual([
+    expect.objectContaining({ type: 'pet-archive-ready', token: 'download-1' }),
+  ]);
   expect(remove).toHaveBeenCalledOnce();
+});
+
+test('queues an archive announcement before the pet page consumer subscribes', () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  const remove = vi.fn();
+  const navigationListener = vi.fn();
+  const petImport = createAndroidPetImport(importHost({
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return remove;
+    },
+  }));
+  const received: string[] = [];
+
+  const disconnect = petImport.connect(navigationListener);
+  nativeListener?.({ type: 'pet-archive-ready', token: 'download-before-mount' });
+  const unsubscribe = petImport.subscribe(({ token }) => received.push(token));
+
+  expect(navigationListener).toHaveBeenCalledWith({
+    type: 'pet-archive-ready', token: 'download-before-mount',
+  });
+  expect(received).toEqual(['download-before-mount']);
+  unsubscribe();
+  expect(remove).not.toHaveBeenCalled();
+  disconnect();
+  expect(remove).toHaveBeenCalledOnce();
+});
+
+test('retries the active archive when app disposal is followed by persistence failure', async () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  let rejectPersist!: (reason: Error) => void;
+  const completePendingArchive = vi.fn(async () => undefined);
+  const petImport = createAndroidPetImport(importHost({
+    completePendingArchive,
+    persistValidatedPet: () => new Promise((_resolve, reject) => { rejectPersist = reject; }),
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return () => undefined;
+    },
+  }));
+  petImport.connect();
+  let claim: { type: 'pet-archive-ready'; token: string; claimId?: number } | undefined;
+  petImport.subscribe((event) => { claim = event; });
+  nativeListener?.({ type: 'pet-archive-ready', token: 'dispose-failure' });
+  const persistence = petImport.persistValidatedPet(MURK_TEST_PET, claim);
+
+  await vi.waitFor(() => expect(rejectPersist).toBeTypeOf('function'));
+  petImport.dispose();
+  rejectPersist(new Error('native persistence failed'));
+  await expect(persistence).rejects.toThrow('native persistence failed');
+
+  expect(completePendingArchive).toHaveBeenCalledOnce();
+  expect(completePendingArchive).toHaveBeenCalledWith('dispose-failure', 'retry');
+});
+
+test('redelivers a failed persistence claim to the consumer mounted while it was pending', async () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  let rejectPersist!: (reason: Error) => void;
+  const petImport = createAndroidPetImport(importHost({
+    persistValidatedPet: () => new Promise((_resolve, reject) => { rejectPersist = reject; }),
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return () => undefined;
+    },
+  }));
+  petImport.connect();
+  const firstClaims: Array<{ token: string; claimId?: number }> = [];
+  const unsubscribe = petImport.subscribe((event) => firstClaims.push(event));
+  nativeListener?.({ type: 'pet-archive-ready', token: 'remount-failure' });
+  const persistence = petImport.persistValidatedPet(MURK_TEST_PET, firstClaims[0]);
+  await vi.waitFor(() => expect(rejectPersist).toBeTypeOf('function'));
+  unsubscribe();
+  const remountedClaims: Array<{ token: string; claimId?: number }> = [];
+  petImport.subscribe((event) => remountedClaims.push(event));
+
+  expect(remountedClaims).toEqual([]);
+  rejectPersist(new Error('native persistence failed'));
+  await expect(persistence).rejects.toThrow('native persistence failed');
+
+  expect(remountedClaims).toHaveLength(1);
+  expect(remountedClaims[0]).toMatchObject({ token: 'remount-failure' });
+  expect(remountedClaims[0]!.claimId).not.toBe(firstClaims[0]!.claimId);
+});
+
+test('rejects completion from a released page claim after remount assigns a new lease', async () => {
+  let nativeListener: ((event: { type: 'pet-archive-ready'; token: string }) => void) | undefined;
+  const completePendingArchive = vi.fn(async () => undefined);
+  const petImport = createAndroidPetImport(importHost({
+    completePendingArchive,
+    subscribePetArchives: (listener) => {
+      nativeListener = listener;
+      return () => undefined;
+    },
+  }));
+  petImport.connect();
+  let oldClaim: { token: string; claimId?: number } | undefined;
+  const unsubscribe = petImport.subscribe((event) => { oldClaim = event; });
+  nativeListener?.({ type: 'pet-archive-ready', token: 'leased-token' });
+  unsubscribe();
+  let newClaim: { token: string; claimId?: number } | undefined;
+  petImport.subscribe((event) => { newClaim = event; });
+
+  await expect(petImport.completePendingArchive('leased-token', 'retry', oldClaim))
+    .rejects.toThrow('stale Android pending archive claim');
+  expect(newClaim?.claimId).not.toBe(oldClaim?.claimId);
+  expect(completePendingArchive).not.toHaveBeenCalled();
 });
 
 test('serializes duplicate native announcements until the active claim is explicitly finished', async () => {

@@ -4,6 +4,7 @@ import android.util.AtomicFile
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import io.elevenlabs.codexpetpause.pets.AndroidPetCatalog
 import java.util.Base64
 import java.util.UUID
 import org.json.JSONObject
@@ -23,12 +24,32 @@ internal interface RevisionTokenSource {
     fun nextRevision(): String
 }
 
+internal interface RuntimeSnapshotReader {
+    fun readRuntimeSnapshot(file: File): String?
+}
+
+internal interface PetCatalogSnapshotReader {
+    fun readPetCatalog(file: File, catalog: AndroidPetCatalog): String?
+}
+
 private object UuidRevisionTokenSource : RevisionTokenSource {
     override fun nextRevision(): String = UUID.randomUUID().toString().replace("-", "")
 }
 
-internal class AndroidStateFileSystem : StateFileSystem {
+internal class AndroidStateFileSystem : StateFileSystem, RuntimeSnapshotReader, PetCatalogSnapshotReader {
     override fun readText(file: File): String? = if (file.exists()) file.readText(Charsets.UTF_8) else null
+
+    override fun readRuntimeSnapshot(file: File): String? = if (file.exists()) {
+        file.bufferedReader(Charsets.UTF_8).use(AndroidRuntimeSnapshot::fromPersistedReader).toJson()
+    } else {
+        null
+    }
+
+    override fun readPetCatalog(file: File, catalog: AndroidPetCatalog): String? = if (file.exists()) {
+        file.bufferedReader(Charsets.UTF_8).use(catalog::load)
+    } else {
+        null
+    }
 
     override fun writeAtomically(file: File, value: String) {
         file.parentFile?.mkdirs()
@@ -89,6 +110,12 @@ internal object AndroidStateValidator {
     fun validateSnapshot(value: String) {
         val snapshot = objectValue(value, "Invalid Android state snapshot")
         require(integer(snapshot, "schemaVersion") == 1) { "Unsupported Android state schema" }
+        if (snapshot.has("runtimeRevision")) {
+            val revision = snapshot.get("runtimeRevision")
+            require(
+                (revision is Int && revision >= 0) || (revision is Long && revision >= 0L),
+            ) { "Invalid Android runtime revision" }
+        }
         require(snapshot.has("settingsJson")) { "Invalid Android settings JSON" }
         if (!snapshot.isNull("settingsJson")) validateSettings(string(snapshot, "settingsJson"))
         val history = snapshot.getJSONArray("historyJson")
@@ -265,6 +292,16 @@ internal class AndroidStateStore(
     private val petsRoot = File(filesDir, "pets")
 
     fun readSnapshot(): String? = fileSystem.readText(stateFile)
+
+    fun readRuntimeSnapshot(): String? = when (fileSystem) {
+        is RuntimeSnapshotReader -> fileSystem.readRuntimeSnapshot(stateFile)
+        else -> fileSystem.readText(stateFile)?.let(AndroidRuntimeSnapshot::fromPersistedJson)?.toJson()
+    }
+
+    fun readPetCatalog(catalog: AndroidPetCatalog): String? = when (fileSystem) {
+        is PetCatalogSnapshotReader -> fileSystem.readPetCatalog(stateFile, catalog)
+        else -> fileSystem.readText(stateFile)?.reader()?.use(catalog::load)
+    }
 
     fun writeSnapshot(snapshotJson: String) {
         AndroidStateValidator.validateSnapshot(snapshotJson)

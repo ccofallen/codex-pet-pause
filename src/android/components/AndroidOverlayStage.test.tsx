@@ -1,11 +1,11 @@
-import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createDefaultSettings } from '../../app/defaults';
 import type { AndroidHostSnapshot } from '../bridge/androidHost';
 import {
+  androidPetAnimation,
   AndroidOverlayStage,
-  type AndroidOverlayMessageHost,
 } from './AndroidOverlayStage';
 
 const REVISION = '0123456789abcdef0123456789abcdef';
@@ -63,14 +63,17 @@ function renderOverlay({
   customPet?: boolean;
   reminderDue?: boolean;
 } = {}) {
-  const postMessage = vi.fn<AndroidOverlayMessageHost['postMessage']>();
+  const postMessage = vi.fn();
+  const legacyCombinedSurfaceProps = {
+    host: { postMessage },
+    menuOpen,
+    bubbleOpen,
+    side,
+  };
   render(
     <AndroidOverlayStage
       snapshot={snapshotFor(size, { customPet, reminderDue })}
-      host={{ postMessage }}
-      menuOpen={menuOpen}
-      bubbleOpen={bubbleOpen}
-      side={side}
+      {...legacyCombinedSurfaceProps}
     />,
   );
   return { postMessage };
@@ -100,27 +103,38 @@ test('loads a selected custom pet from its immutable bundled local-origin asset 
   );
 });
 
-test('opens a three-action menu toward available screen space', () => {
-  renderOverlay({ menuOpen: true, side: 'right' });
-
-  const menu = screen.getByRole('menu');
-  expect(menu).toHaveAttribute('data-expand', 'left');
-  expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent))
-    .toEqual(['Settings', 'Hide', 'Quit']);
-});
-
-test('sends menu choices through the typed overlay host contract', async () => {
+test('never renders or emits legacy combined-surface behavior', async () => {
   const user = userEvent.setup();
-  const { postMessage } = renderOverlay({ menuOpen: true });
+  const { postMessage } = renderOverlay({
+    menuOpen: true,
+    bubbleOpen: true,
+    side: 'right',
+    reminderDue: true,
+  });
 
-  await user.click(screen.getByRole('menuitem', { name: 'Hide' }));
+  await user.click(screen.getByTestId('android-pet'));
+  await user.dblClick(screen.getByTestId('android-pet'));
 
-  expect(postMessage).toHaveBeenCalledWith({ type: 'menu-action', action: 'hide' });
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(postMessage).not.toHaveBeenCalled();
 });
 
-test('reuses reminder presentation copy in the transparent overlay bubble', () => {
-  renderOverlay({ bubbleOpen: true, reminderDue: true });
+test('preserves tap and drag animation selection for default and imported pets', () => {
+  expect(androidPetAnimation(false, { type: 'tap', sequence: 1 }, false)).toBe('review');
+  expect(androidPetAnimation(true, { type: 'tap', sequence: 1 }, false)).toBe('waving');
+  expect(androidPetAnimation(false, { type: 'drag', facing: 'left', sequence: 2 }, false))
+    .toBe('picked-up');
+  expect(androidPetAnimation(true, { type: 'drag', facing: 'right', sequence: 2 }, false))
+    .toBe('running-right');
+  expect(androidPetAnimation(false, { type: 'idle', sequence: 3 }, true)).toBe('waiting');
+});
 
-  const bubble = screen.getByRole('dialog', { name: 'Look into the distance reminder' });
-  expect(bubble).toHaveTextContent('You have been looking at the screen for a while. Want to look into the distance?');
+test('uses a pet-only stage with no expansion layout or surface siblings', () => {
+  renderOverlay();
+
+  const stage = screen.getByTestId('android-overlay-stage');
+  expect(stage).not.toHaveAttribute('data-expand');
+  expect(stage.children).toHaveLength(1);
+  expect(stage.firstElementChild).toBe(screen.getByTestId('android-pet'));
 });

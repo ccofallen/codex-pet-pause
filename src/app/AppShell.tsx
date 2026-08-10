@@ -65,7 +65,7 @@ export function AppShell() {
       />
       <PwaUpdatePrompt />
       {!hidePetFromHost && (
-        activeImportedPet === undefined
+        activeImportedPet === undefined || !('spritesheet' in activeImportedPet)
           ? <InteractiveCatStage key={`builtin:${snapshot.settings.activePetId}`} />
           : <CodexPetStage key={`imported:${activeImportedPet.id}`} pet={activeImportedPet} />
       )}

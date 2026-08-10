@@ -2,7 +2,7 @@ package io.elevenlabs.codexpetpause.overlay
 
 import kotlin.math.abs
 
-const val DOUBLE_TAP_WINDOW_MS: Long = 250L
+const val DOUBLE_TAP_WINDOW_MS: Long = 400L
 
 enum class MotionAction {
     DOWN,
@@ -83,6 +83,12 @@ class OverlayGestureInterpreter(
 
     private fun onDown(sample: MotionEventSample): OverlayGestureResult {
         if (activeGesture != null) return OverlayGestureResult.NoOp
+        val edge = placement.attachment as? Attachment.Edge
+        if (edge?.retracted == true && isInsideVisiblePet(sample.x, sample.y)) {
+            placement = geometry.restore(placement, bounds)
+            pendingTapUpAtMs = null
+            return OverlayGestureResult.Restored
+        }
         val pendingTap = pendingTapUpAtMs
         val elapsedSincePending = pendingTap?.let { sample.eventTimeMs - it }
         val expiredPendingTap = elapsedSincePending != null && elapsedSincePending >= doubleTapWindowMs
@@ -122,12 +128,6 @@ class OverlayGestureInterpreter(
             if (gesture.isSecondTap && pendingTapUpAtMs != null) {
                 pendingTapUpAtMs = null
                 return OverlayGestureResult.OpenMenu
-            }
-            val edge = placement.attachment as? Attachment.Edge
-            if (edge?.retracted == true && isInsideVisiblePet(sample.x, sample.y)) {
-                placement = geometry.restore(placement, bounds)
-                pendingTapUpAtMs = null
-                return OverlayGestureResult.Restored
             }
             pendingTapUpAtMs = sample.eventTimeMs
             return OverlayGestureResult.NoOp

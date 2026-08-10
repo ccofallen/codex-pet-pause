@@ -13,4 +13,8 @@ internal object AndroidStateCoordinatorRegistry {
             AndroidStateCoordinator(AndroidStateStore(filesDir))
         }
     }
+
+    internal fun clearForTests() {
+        coordinators.clear()
+    }
 }

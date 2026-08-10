@@ -39,6 +39,7 @@ function controllerFor(snapshot: AppSnapshot): AppController {
     getSnapshot: () => snapshot,
     subscribe: vi.fn(() => () => undefined),
     hydrate: vi.fn(async () => undefined),
+    applyCommittedRuntimeState: vi.fn(),
     reconcileNow: vi.fn(async () => undefined),
     complete: vi.fn(async () => undefined),
     snooze: vi.fn(async () => undefined),
@@ -57,11 +58,15 @@ function controllerFor(snapshot: AppSnapshot): AppController {
   };
 }
 
-function renderWithSnapshot(snapshot: AppSnapshot, locale: 'zh-CN' | 'en' = 'zh-CN') {
+function renderWithSnapshot(
+  snapshot: AppSnapshot,
+  locale: 'zh-CN' | 'en' = 'zh-CN',
+  pauseWhenHidden = false,
+) {
   const controller = controllerFor(snapshot);
   render(
     <AppProvider controller={controller}>
-      <I18nProvider locale={locale}><Dashboard /></I18nProvider>
+      <I18nProvider locale={locale}><Dashboard pauseWhenHidden={pauseWhenHidden} /></I18nProvider>
     </AppProvider>,
   );
   return controller;
@@ -166,6 +171,54 @@ test('updates the display countdown once per second without reconciling the sche
 
   expect(screen.getByTestId('next-reminder')).toHaveTextContent('11 秒');
   expect(controller.reconcileNow).not.toHaveBeenCalled();
+});
+
+test('a committed runtime deadline restarts the mounted countdown and keeps decrementing', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  const deps = (await import('../../../test/fakes')).createFakeDependencies({ now: NOW });
+  const controller = (await import('../../../app/appController')).createAppController(deps);
+  await controller.hydrate();
+  render(
+    <AppProvider controller={controller} lifecycle="passive">
+      <I18nProvider locale="en"><Dashboard /></I18nProvider>
+    </AppProvider>,
+  );
+  await act(async () => { await Promise.resolve(); });
+  const settings = createDefaultSettings(NOW, 'en');
+  settings.reminders = settings.reminders.map((reminder, index) => ({
+    ...reminder,
+    enabled: true,
+    status: 'scheduled' as const,
+    nextDueAt: NOW + (index + 1) * 60_000,
+  }));
+
+  act(() => controller.applyCommittedRuntimeState({ revision: 1, settings }));
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('1 minute');
+
+  act(() => vi.advanceTimersByTime(1_000));
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('59 seconds');
+});
+
+test('countdown pauses while hidden and recalculates immediately when visible', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  renderWithSnapshot(snapshotWithDueTimes([12 / 60]), 'en', true);
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('12 seconds');
+
+  visibility.mockReturnValue('hidden');
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('12 seconds');
+
+  visibility.mockReturnValue('visible');
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('7 seconds');
+
+  act(() => vi.advanceTimersByTime(1_000));
+  expect(screen.getByTestId('next-reminder')).toHaveTextContent('6 seconds');
+  visibility.mockRestore();
 });
 
 test('没有启用提醒时只显示空状态，不声称提醒正在按计划运行', () => {

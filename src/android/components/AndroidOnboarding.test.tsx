@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { I18nProvider } from '../../i18n/I18nProvider';
@@ -30,12 +30,14 @@ function controlHost(initial: AndroidCapabilities) {
   let listener: ((event: AndroidCapabilitiesEvent) => void) | undefined;
   const host: AndroidControlHost = {
     loadSnapshot: async () => null,
+    loadRuntimeSnapshot: async () => null,
     clearSettings: async () => undefined,
     replaceHistory: async () => undefined,
     clearHistory: async () => undefined,
     clearPets: async () => undefined,
     saveSettings: async () => undefined,
     appendHistory: async () => undefined,
+    pruneHistory: async () => undefined,
     savePet: async () => undefined,
     deletePet: async () => undefined,
     selectPet: async () => undefined,
@@ -217,4 +219,39 @@ test('updates blocked notification UI from a fresh Activity-resume capability ev
 
   await waitFor(() => expect(screen.queryByRole('button', { name: '打开通知设置' }))
     .not.toBeInTheDocument());
+});
+
+test.each([
+  ['zh-CN', '隐藏宠物', '退出应用'],
+  ['en', 'Hide pet', 'Quit app'],
+] as const)('renders only pet and quit controls after authorized startup in %s', async (locale, petControl, quitControl) => {
+  const fixture = controlHost({
+    ...api35Denied,
+    overlayPermission: 'granted',
+    notificationPermission: 'granted',
+    serviceActive: true,
+    petVisible: true,
+  });
+  renderOnboarding(fixture.host, locale);
+
+  const petButton = await screen.findByRole('button', { name: petControl });
+  const controls = petButton.closest<HTMLElement>('.android-onboarding');
+
+  expect(controls).toHaveClass('android-onboarding--ready');
+  expect(within(controls!).getAllByRole('button')).toHaveLength(2);
+  expect(within(controls!).getByRole('button', { name: quitControl })).toBeVisible();
+  expect(controls!.querySelectorAll('p, h3')).toHaveLength(0);
+});
+
+test.each([
+  ['zh-CN', '启用悬浮宠物', '允许宠物显示在其他应用上层'],
+  ['en', 'Enable floating pet', 'Allow the pet to appear over other apps'],
+] as const)('retains overlay setup instructions in %s when permission is denied', async (locale, enableControl, instruction) => {
+  const user = userEvent.setup();
+  const { host } = controlHost(api28Denied);
+  renderOnboarding(host, locale);
+
+  await user.click(await screen.findByRole('button', { name: enableControl }));
+
+  expect(screen.getByText(instruction)).toBeVisible();
 });
